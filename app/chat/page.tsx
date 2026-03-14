@@ -87,6 +87,293 @@ function Toast({ type, message, onClose }: ToastState & { onClose: () => void })
   );
 }
 
+/* ─────────────────────────── Chart Component ─────────────────────────── */
+interface ChartData {
+  type: string;
+  title: string;
+  data: Array<Record<string, unknown>>;
+  xField?: string;
+  yField?: string;
+  colorScheme?: string[];
+  smooth?: boolean;
+  lineWidth?: number;
+  pointSize?: number;
+  [key: string]: unknown; // Allow additional properties
+}
+
+function Chart({ chart }: { chart: ChartData }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    if (!chart || !chart.data || chart.data.length === 0) return;
+
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Clear canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const padding = 60;
+    const chartWidth = canvas.width - padding * 2;
+    const chartHeight = canvas.height - padding * 2;
+
+    // Get colors
+    const colors = chart.colorScheme || ['#5B8FF9', '#5AD8A6', '#F6BD16', '#E86452', '#6DC8EC'];
+
+    // Draw title
+    ctx.fillStyle = '#1a1a2e';
+    ctx.font = 'bold 16px Poppins, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(chart.title, canvas.width / 2, 25);
+
+    // Calculate max value for scaling
+    const yField = chart.yField || 'value';
+    const xField = chart.xField || 'label';
+    const maxValue = Math.max(...chart.data.map((d: Record<string, unknown>) => Number(d[yField]) || 0)) * 1.1;
+
+    // Draw Y-axis
+    ctx.strokeStyle = '#e5e7eb';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(padding, padding);
+    ctx.lineTo(padding, canvas.height - padding);
+    ctx.stroke();
+
+    // Draw X-axis
+    ctx.beginPath();
+    ctx.moveTo(padding, canvas.height - padding);
+    ctx.lineTo(canvas.width - padding, canvas.height - padding);
+    ctx.stroke();
+
+    // Draw chart based on type
+    if (chart.type === 'bar') {
+      const barWidth = chartWidth / chart.data.length * 0.6;
+      const gap = chartWidth / chart.data.length;
+
+      chart.data.forEach((item: Record<string, unknown>, index: number) => {
+        const value = Number(item[yField]) || 0;
+        const barHeight = (value / maxValue) * chartHeight;
+        const x = padding + gap * index + (gap - barWidth) / 2;
+        const y = canvas.height - padding - barHeight;
+
+        // Draw bar
+        ctx.fillStyle = colors[index % colors.length];
+        ctx.fillRect(x, y, barWidth, barHeight);
+
+        // Draw value on top
+        ctx.fillStyle = '#1a1a2e';
+        ctx.font = '11px Poppins, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(value.toString(), x + barWidth / 2, y - 5);
+
+        // Draw X-axis label
+        ctx.save();
+        ctx.translate(x + barWidth / 2, canvas.height - padding + 15);
+        ctx.rotate(-Math.PI / 4);
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#6b7280';
+        ctx.font = '10px Poppins, sans-serif';
+        const label = String(item[xField] || index);
+        ctx.fillText(label.length > 10 ? label.substring(0, 10) + '...' : label, 0, 0);
+        ctx.restore();
+      });
+    } else if (chart.type === 'line') {
+      const gap = chartWidth / (chart.data.length - 1 || 1);
+
+      // Get all points coordinates
+      const points = chart.data.map((item: Record<string, unknown>, index: number) => {
+        const value = Number(item[yField]) || 0;
+        return {
+          x: padding + gap * index,
+          y: canvas.height - padding - (value / maxValue) * chartHeight,
+          value
+        };
+      });
+
+      // Draw line
+      ctx.strokeStyle = colors[0];
+      ctx.lineWidth = (chart as Record<string, unknown>).lineWidth as number || 3;
+      ctx.beginPath();
+
+      // Check if smooth line is requested
+      const smooth = (chart as Record<string, unknown>).smooth === true;
+
+      if (smooth && points.length > 1) {
+        // Draw smooth curve using bezier curves
+        ctx.moveTo(points[0].x, points[0].y);
+
+        for (let i = 0; i < points.length - 1; i++) {
+          const p0 = points[Math.max(0, i - 1)];
+          const p1 = points[i];
+          const p2 = points[i + 1];
+          const p3 = points[Math.min(points.length - 1, i + 2)];
+
+          // Calculate control points for smooth curve
+          const cp1x = p1.x + (p2.x - p0.x) / 6;
+          const cp1y = p1.y + (p2.y - p0.y) / 6;
+          const cp2x = p2.x - (p3.x - p1.x) / 6;
+          const cp2y = p2.y - (p3.y - p1.y) / 6;
+
+          ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+        }
+      } else {
+        // Draw straight lines
+        points.forEach((point, index) => {
+          if (index === 0) {
+            ctx.moveTo(point.x, point.y);
+          } else {
+            ctx.lineTo(point.x, point.y);
+          }
+        });
+      }
+
+      ctx.stroke();
+
+      // Draw points
+      const pointSize = (chart as Record<string, unknown>).pointSize as number || 5;
+      points.forEach((point, index) => {
+        ctx.fillStyle = colors[0];
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, pointSize, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Draw value
+        ctx.fillStyle = '#1a1a2e';
+        ctx.font = '11px Poppins, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(point.value.toString(), point.x, point.y - pointSize - 5);
+
+        // Draw X-axis label
+        ctx.save();
+        ctx.translate(point.x, canvas.height - padding + 15);
+        ctx.rotate(-Math.PI / 4);
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#6b7280';
+        ctx.font = '10px Poppins, sans-serif';
+        const item = chart.data[index];
+        const label = String(item[xField] || index);
+        ctx.fillText(label.length > 10 ? label.substring(0, 10) + '...' : label, 0, 0);
+        ctx.restore();
+      });
+
+      // Draw points
+      chart.data.forEach((item: Record<string, unknown>, index: number) => {
+        const value = Number(item[yField]) || 0;
+        const x = padding + gap * index;
+        const y = canvas.height - padding - (value / maxValue) * chartHeight;
+
+        ctx.fillStyle = colors[0];
+        ctx.beginPath();
+        ctx.arc(x, y, 5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Draw value
+        ctx.fillStyle = '#1a1a2e';
+        ctx.font = '11px Poppins, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(value.toString(), x, y - 10);
+
+        // Draw X-axis label
+        ctx.save();
+        ctx.translate(x, canvas.height - padding + 15);
+        ctx.rotate(-Math.PI / 4);
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#6b7280';
+        ctx.font = '10px Poppins, sans-serif';
+        const label = String(item[xField] || index);
+        ctx.fillText(label.length > 10 ? label.substring(0, 10) + '...' : label, 0, 0);
+        ctx.restore();
+      });
+    } else if (chart.type === 'pie') {
+      const total = chart.data.reduce((sum: number, item: Record<string, unknown>) => {
+        return sum + (Number(item[yField]) || 0);
+      }, 0);
+
+      let currentAngle = -Math.PI / 2;
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2 + 10;
+      const radius = Math.min(chartWidth, chartHeight) / 2.5;
+
+      chart.data.forEach((item: Record<string, unknown>, index: number) => {
+        const value = Number(item[yField]) || 0;
+        const sliceAngle = (value / total) * Math.PI * 2;
+
+        // Draw slice
+        ctx.fillStyle = colors[index % colors.length];
+        ctx.beginPath();
+        ctx.moveTo(centerX, centerY);
+        ctx.arc(centerX, centerY, radius, currentAngle, currentAngle + sliceAngle);
+        ctx.closePath();
+        ctx.fill();
+
+        // Draw label
+        const labelAngle = currentAngle + sliceAngle / 2;
+        const labelX = centerX + Math.cos(labelAngle) * (radius * 0.7);
+        const labelY = centerY + Math.sin(labelAngle) * (radius * 0.7);
+
+        const percentage = ((value / total) * 100).toFixed(1);
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 12px Poppins, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(`${percentage}%`, labelX, labelY);
+
+        currentAngle += sliceAngle;
+      });
+
+      // Draw legend
+      const legendX = padding;
+      let legendY = padding;
+
+      chart.data.forEach((item: Record<string, unknown>, index: number) => {
+        const label = String(item[xField] || index);
+
+        // Color box
+        ctx.fillStyle = colors[index % colors.length];
+        ctx.fillRect(legendX, legendY, 15, 15);
+
+        // Label
+        ctx.fillStyle = '#1a1a2e';
+        ctx.font = '11px Poppins, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText(label, legendX + 20, legendY + 12);
+
+        legendY += 22;
+      });
+    } else {
+      // Unsupported chart type
+      ctx.fillStyle = '#6b7280';
+      ctx.font = '14px Poppins, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(`Chart type "${chart.type}" not supported`, canvas.width / 2, canvas.height / 2);
+    }
+
+    // Draw Y-axis labels
+    ctx.fillStyle = '#6b7280';
+    ctx.font = '10px Poppins, sans-serif';
+    ctx.textAlign = 'right';
+    for (let i = 0; i <= 5; i++) {
+      const value = (maxValue / 5) * i;
+      const y = canvas.height - padding - (value / maxValue) * chartHeight;
+      ctx.fillText(Math.round(value).toString(), padding - 10, y + 3);
+    }
+
+  }, [chart]);
+
+  return (
+    <div style={{ marginTop: 12, borderRadius: 12, overflow: 'hidden', background: '#fff', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
+      <canvas
+        ref={canvasRef}
+        width={600}
+        height={350}
+        style={{ width: '100%', height: 'auto', display: 'block' }}
+      />
+    </div>
+  );
+}
+
 /* ─────────────────────────── Helpers ─────────────────────────── */
 function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -608,6 +895,7 @@ export default function ChatPage() {
         message: text,
         useLangChainMemory: true,
         conversationId: currentApiConvId,
+        responseMode: { includeChartSpec: true },
       };
 
       // ── SSE streaming mode via EventSource ──
@@ -615,6 +903,7 @@ export default function ChatPage() {
         const params = new URLSearchParams({
           message: text,
           useLangChainMemory: "true",
+          includeChartSpec: "true",
         });
         if (currentApiConvId) params.set("conversationId", currentApiConvId);
         const url = `${API_BASE}/chat/stream?${params.toString()}`;
@@ -1603,6 +1892,15 @@ export default function ChatPage() {
                     {formatTime(msg.createdAt)}
                   </div>
                 </div>
+
+                {/* Chart — display chart data (assistant only) */}
+                {msg.role === "assistant" && msg.chart &&
+                  typeof msg.chart === "object" &&
+                  "type" in msg.chart &&
+                  "title" in msg.chart &&
+                  "data" in msg.chart && (
+                  <Chart chart={msg.chart as unknown as ChartData} />
+                )}
 
                 {/* Evidence — collapsible (assistant only) */}
                 {msg.role === "assistant" && msg.evidence && msg.evidence.length > 0 && (
