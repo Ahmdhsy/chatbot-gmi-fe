@@ -94,6 +94,7 @@ interface ChartData {
   data: Array<Record<string, unknown>>;
   xField?: string;
   yField?: string;
+  seriesField?: string;
   colorScheme?: string[];
   smooth?: boolean;
   lineWidth?: number;
@@ -120,19 +121,43 @@ function Chart({ chart }: { chart: ChartData }) {
     const chartWidth = canvas.width - padding * 2;
     const chartHeight = canvas.height - padding * 2;
 
-    // Get colors
+    // Get chart configuration
     const colors = chart.colorScheme || ['#5B8FF9', '#5AD8A6', '#F6BD16', '#E86452', '#6DC8EC'];
+    const yField = chart.yField || 'value';
+    const xField = chart.xField || 'label';
+    const seriesField = chart.seriesField;
+    const hasMultipleSeries = seriesField && chart.data.length > 0;
 
-    // Draw title
+    // ========== GROUP DATA BY SERIES ==========
+    const groupedData: Record<string, typeof chart.data> = {};
+
+    if (hasMultipleSeries) {
+      chart.data.forEach(item => {
+        const key = String(item[seriesField]);
+        if (!groupedData[key]) {
+          groupedData[key] = [];
+        }
+        groupedData[key].push(item);
+      });
+    } else {
+      groupedData['default'] = chart.data;
+    }
+
+    // ========== GET UNIQUE X VALUES ==========
+    const uniqueXValues = Array.from(
+      new Set(chart.data.map(item => String(item[xField])))
+    ).sort();
+
+    // ========== CALCULATE MAX VALUE ==========
+    const maxValue = Math.max(
+      ...chart.data.map(d => Number(d[yField]) || 0)
+    ) * 1.1;
+
+    // ========== DRAW TITLE ==========
     ctx.fillStyle = '#1a1a2e';
     ctx.font = 'bold 16px Poppins, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(chart.title, canvas.width / 2, 25);
-
-    // Calculate max value for scaling
-    const yField = chart.yField || 'value';
-    const xField = chart.xField || 'label';
-    const maxValue = Math.max(...chart.data.map((d: Record<string, unknown>) => Number(d[yField]) || 0)) * 1.1;
 
     // Draw Y-axis
     ctx.strokeStyle = '#e5e7eb';
@@ -181,112 +206,190 @@ function Chart({ chart }: { chart: ChartData }) {
         ctx.restore();
       });
     } else if (chart.type === 'line') {
-      const gap = chartWidth / (chart.data.length - 1 || 1);
+      if (hasMultipleSeries) {
+        // ========== MULTI-SERIES LINE CHART ==========
+        const seriesNames = Object.keys(groupedData);
 
-      // Get all points coordinates
-      const points = chart.data.map((item: Record<string, unknown>, index: number) => {
-        const value = Number(item[yField]) || 0;
-        return {
-          x: padding + gap * index,
-          y: canvas.height - padding - (value / maxValue) * chartHeight,
-          value
-        };
-      });
+        seriesNames.forEach((seriesName, seriesIndex) => {
+          const seriesData = groupedData[seriesName];
+          const color = colors[seriesIndex % colors.length];
 
-      // Draw line
-      ctx.strokeStyle = colors[0];
-      ctx.lineWidth = (chart as Record<string, unknown>).lineWidth as number || 3;
-      ctx.beginPath();
+          // Sort and create points for this series
+          const points = seriesData
+            .sort((a, b) => {
+              const aIndex = uniqueXValues.indexOf(String(a[xField]));
+              const bIndex = uniqueXValues.indexOf(String(b[xField]));
+              return aIndex - bIndex;
+            })
+            .map(item => {
+              const xIndex = uniqueXValues.indexOf(String(item[xField]));
+              const x = padding + (xIndex / (uniqueXValues.length - 1 || 1)) * chartWidth;
+              const value = Number(item[yField]) || 0;
+              const y = canvas.height - padding - (value / maxValue) * chartHeight;
+              return { x, y, value, label: item[xField] };
+            });
 
-      // Check if smooth line is requested
-      const smooth = (chart as Record<string, unknown>).smooth === true;
+          // Draw line
+          ctx.strokeStyle = color;
+          ctx.lineWidth = chart.lineWidth || 2;
+          ctx.beginPath();
 
-      if (smooth && points.length > 1) {
-        // Draw smooth curve using bezier curves
-        ctx.moveTo(points[0].x, points[0].y);
+          const smooth = chart.smooth === true;
+          if (smooth && points.length > 1) {
+            // Smooth curve (bezier)
+            ctx.moveTo(points[0].x, points[0].y);
+            for (let i = 0; i < points.length - 1; i++) {
+              const p0 = points[Math.max(0, i - 1)];
+              const p1 = points[i];
+              const p2 = points[i + 1];
+              const p3 = points[Math.min(points.length - 1, i + 2)];
 
-        for (let i = 0; i < points.length - 1; i++) {
-          const p0 = points[Math.max(0, i - 1)];
-          const p1 = points[i];
-          const p2 = points[i + 1];
-          const p3 = points[Math.min(points.length - 1, i + 2)];
+              const cp1x = p1.x + (p2.x - p0.x) / 6;
+              const cp1y = p1.y + (p2.y - p0.y) / 6;
+              const cp2x = p2.x - (p3.x - p1.x) / 6;
+              const cp2y = p2.y - (p3.y - p1.y) / 6;
 
-          // Calculate control points for smooth curve
-          const cp1x = p1.x + (p2.x - p0.x) / 6;
-          const cp1y = p1.y + (p2.y - p0.y) / 6;
-          const cp2x = p2.x - (p3.x - p1.x) / 6;
-          const cp2y = p2.y - (p3.y - p1.y) / 6;
-
-          ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
-        }
-      } else {
-        // Draw straight lines
-        points.forEach((point, index) => {
-          if (index === 0) {
-            ctx.moveTo(point.x, point.y);
+              ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+            }
           } else {
-            ctx.lineTo(point.x, point.y);
+            // Straight lines
+            points.forEach((point, index) => {
+              if (index === 0) ctx.moveTo(point.x, point.y);
+              else ctx.lineTo(point.x, point.y);
+            });
           }
+          ctx.stroke();
+
+          // Draw points
+          ctx.fillStyle = color;
+          const pointSize = chart.pointSize || 4;
+          points.forEach(point => {
+            ctx.beginPath();
+            ctx.arc(point.x, point.y, pointSize, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Draw value label
+            ctx.fillStyle = '#1a1a2e';
+            ctx.font = '10px Poppins, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(point.value.toFixed(1), point.x, point.y - pointSize - 3);
+            ctx.fillStyle = color; // Reset for next point
+          });
+        });
+
+        // ========== DRAW X-AXIS LABELS ==========
+        uniqueXValues.forEach((xValue, index) => {
+          const x = padding + (index / (uniqueXValues.length - 1 || 1)) * chartWidth;
+          ctx.save();
+          ctx.translate(x, canvas.height - padding + 15);
+          ctx.rotate(-Math.PI / 4);
+          ctx.textAlign = 'right';
+          ctx.fillStyle = '#6b7280';
+          ctx.font = '10px Poppins, sans-serif';
+          ctx.fillText(String(xValue), 0, 0);
+          ctx.restore();
+        });
+
+        // ========== DRAW LEGEND ==========
+        const legendY = canvas.height - padding + 40;
+        let legendX = padding;
+
+        seriesNames.forEach((seriesName, index) => {
+          const color = colors[index % colors.length];
+
+          // Color box
+          ctx.fillStyle = color;
+          ctx.fillRect(legendX, legendY, 12, 12);
+
+          // Series name
+          ctx.fillStyle = '#1a1a2e';
+          ctx.font = '11px Poppins, sans-serif';
+          ctx.textAlign = 'left';
+          ctx.fillText(seriesName, legendX + 16, legendY + 10);
+
+          legendX += ctx.measureText(seriesName).width + 40;
+        });
+
+      } else {
+        // ========== SINGLE SERIES LINE CHART ==========
+        const gap = chartWidth / (chart.data.length - 1 || 1);
+
+        // Get all points coordinates
+        const points = chart.data.map((item: Record<string, unknown>, index: number) => {
+          const value = Number(item[yField]) || 0;
+          return {
+            x: padding + gap * index,
+            y: canvas.height - padding - (value / maxValue) * chartHeight,
+            value
+          };
+        });
+
+        // Draw line
+        ctx.strokeStyle = colors[0];
+        ctx.lineWidth = (chart as Record<string, unknown>).lineWidth as number || 3;
+        ctx.beginPath();
+
+        // Check if smooth line is requested
+        const smooth = (chart as Record<string, unknown>).smooth === true;
+
+        if (smooth && points.length > 1) {
+          // Draw smooth curve using bezier curves
+          ctx.moveTo(points[0].x, points[0].y);
+
+          for (let i = 0; i < points.length - 1; i++) {
+            const p0 = points[Math.max(0, i - 1)];
+            const p1 = points[i];
+            const p2 = points[i + 1];
+            const p3 = points[Math.min(points.length - 1, i + 2)];
+
+            // Calculate control points for smooth curve
+            const cp1x = p1.x + (p2.x - p0.x) / 6;
+            const cp1y = p1.y + (p2.y - p0.y) / 6;
+            const cp2x = p2.x - (p3.x - p1.x) / 6;
+            const cp2y = p2.y - (p3.y - p1.y) / 6;
+
+            ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+          }
+        } else {
+          // Draw straight lines
+          points.forEach((point, index) => {
+            if (index === 0) {
+              ctx.moveTo(point.x, point.y);
+            } else {
+              ctx.lineTo(point.x, point.y);
+            }
+          });
+        }
+
+        ctx.stroke();
+
+        // Draw points
+        const pointSize = (chart as Record<string, unknown>).pointSize as number || 5;
+        points.forEach((point, index) => {
+          ctx.fillStyle = colors[0];
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, pointSize, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Draw value
+          ctx.fillStyle = '#1a1a2e';
+          ctx.font = '11px Poppins, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(point.value.toString(), point.x, point.y - pointSize - 5);
+
+          // Draw X-axis label
+          ctx.save();
+          ctx.translate(point.x, canvas.height - padding + 15);
+          ctx.rotate(-Math.PI / 4);
+          ctx.textAlign = 'right';
+          ctx.fillStyle = '#6b7280';
+          ctx.font = '10px Poppins, sans-serif';
+          const item = chart.data[index];
+          const label = String(item[xField] || index);
+          ctx.fillText(label.length > 10 ? label.substring(0, 10) + '...' : label, 0, 0);
+          ctx.restore();
         });
       }
-
-      ctx.stroke();
-
-      // Draw points
-      const pointSize = (chart as Record<string, unknown>).pointSize as number || 5;
-      points.forEach((point, index) => {
-        ctx.fillStyle = colors[0];
-        ctx.beginPath();
-        ctx.arc(point.x, point.y, pointSize, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Draw value
-        ctx.fillStyle = '#1a1a2e';
-        ctx.font = '11px Poppins, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(point.value.toString(), point.x, point.y - pointSize - 5);
-
-        // Draw X-axis label
-        ctx.save();
-        ctx.translate(point.x, canvas.height - padding + 15);
-        ctx.rotate(-Math.PI / 4);
-        ctx.textAlign = 'right';
-        ctx.fillStyle = '#6b7280';
-        ctx.font = '10px Poppins, sans-serif';
-        const item = chart.data[index];
-        const label = String(item[xField] || index);
-        ctx.fillText(label.length > 10 ? label.substring(0, 10) + '...' : label, 0, 0);
-        ctx.restore();
-      });
-
-      // Draw points
-      chart.data.forEach((item: Record<string, unknown>, index: number) => {
-        const value = Number(item[yField]) || 0;
-        const x = padding + gap * index;
-        const y = canvas.height - padding - (value / maxValue) * chartHeight;
-
-        ctx.fillStyle = colors[0];
-        ctx.beginPath();
-        ctx.arc(x, y, 5, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Draw value
-        ctx.fillStyle = '#1a1a2e';
-        ctx.font = '11px Poppins, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(value.toString(), x, y - 10);
-
-        // Draw X-axis label
-        ctx.save();
-        ctx.translate(x, canvas.height - padding + 15);
-        ctx.rotate(-Math.PI / 4);
-        ctx.textAlign = 'right';
-        ctx.fillStyle = '#6b7280';
-        ctx.font = '10px Poppins, sans-serif';
-        const label = String(item[xField] || index);
-        ctx.fillText(label.length > 10 ? label.substring(0, 10) + '...' : label, 0, 0);
-        ctx.restore();
-      });
     } else if (chart.type === 'pie') {
       const total = chart.data.reduce((sum: number, item: Record<string, unknown>) => {
         return sum + (Number(item[yField]) || 0);
@@ -367,7 +470,7 @@ function Chart({ chart }: { chart: ChartData }) {
       <canvas
         ref={canvasRef}
         width={600}
-        height={350}
+        height={chart.seriesField ? 400 : 350}
         style={{ width: '100%', height: 'auto', display: 'block' }}
       />
     </div>
