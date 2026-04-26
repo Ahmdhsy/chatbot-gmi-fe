@@ -1189,7 +1189,7 @@ function MarkdownMessage({ content }: { content: string }) {
 
           <div
             style={{
-              background: "linear-gradient(180deg, #fff6f1 0%, #fff1e9 100%)",
+              background: "#ffffff",
               border: "1px solid #ffb596",
               borderRadius: 14,
               padding: "14px 14px 12px",
