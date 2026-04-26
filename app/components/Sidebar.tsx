@@ -31,7 +31,6 @@ interface SidebarProps {
   onNewChat: () => void;
   userEmail: string;
   onLogout: () => void;
-  token: string;
 }
 
 export default function Sidebar({
@@ -44,7 +43,6 @@ export default function Sidebar({
   onNewChat,
   userEmail,
   onLogout,
-  token,
 }: SidebarProps) {
   const [expandedSection, setExpandedSection] = useState<"history" | "settings" | null>("history");
 
@@ -55,8 +53,8 @@ export default function Sidebar({
   return (
     <aside
       style={{
-        width: sidebarOpen ? 320 : 0,
-        minWidth: sidebarOpen ? 320 : 0,
+        width: sidebarOpen ? 320 : 56,
+        minWidth: sidebarOpen ? 320 : 56,
         transition: "width .35s cubic-bezier(0.4, 0, 0.2, 1), min-width .35s cubic-bezier(0.4, 0, 0.2, 1)",
         overflow: "hidden",
         display: "flex",
@@ -70,15 +68,16 @@ export default function Sidebar({
       {/* Header */}
       <div
         style={{
-          padding: "20px 24px",
+          padding: sidebarOpen ? "20px 24px" : "12px 8px",
           display: "flex",
           alignItems: "center",
-          justifyContent: "space-between",
+          justifyContent: sidebarOpen ? "space-between" : "center",
           borderBottom: "1px solid #f3f4f6",
           background: "linear-gradient(135deg, #ffffff 0%, #f9fafb 100%)",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        {sidebarOpen && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div
             style={{
               width: 40,
@@ -105,33 +104,39 @@ export default function Sidebar({
             <p style={{ margin: 0, fontSize: "0.95rem", fontWeight: 700, color: "#1a1a2e" }}>Telkom AI</p>
             <p style={{ margin: "2px 0 0", fontSize: "0.7rem", color: "#9ca3af" }}>Assistant</p>
           </div>
-        </div>
+          </div>
+        )}
         <button
-          onClick={() => setSidebarOpen(false)}
+          onClick={() => setSidebarOpen(!sidebarOpen)}
           style={{
             background: "none",
             border: "none",
             cursor: "pointer",
-            fontSize: "1.3rem",
-            color: "#d1d5db",
-            padding: 4,
+            fontSize: "1.2rem",
+            color: "#9ca3af",
+            padding: 8,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             transition: "all .2s ease",
+            borderRadius: 8,
           }}
           onMouseEnter={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.color = "#9ca3af";
+            (e.currentTarget as HTMLButtonElement).style.color = "#4b5563";
+            (e.currentTarget as HTMLButtonElement).style.background = "rgba(0,0,0,0.05)";
           }}
           onMouseLeave={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.color = "#d1d5db";
+            (e.currentTarget as HTMLButtonElement).style.color = "#9ca3af";
+            (e.currentTarget as HTMLButtonElement).style.background = "none";
           }}
-          title="Close sidebar"
+          title={sidebarOpen ? "Minimize sidebar" : "Open sidebar"}
         >
-          ✕
+          ☰
         </button>
       </div>
 
+      {sidebarOpen && (
+      <>
       {/* New Chat Button */}
       <div style={{ padding: "16px 20px" }}>
         <button
@@ -451,6 +456,8 @@ export default function Sidebar({
           <span>Keluar</span>
         </button>
       </div>
+      </>
+      )}
     </aside>
   );
 }

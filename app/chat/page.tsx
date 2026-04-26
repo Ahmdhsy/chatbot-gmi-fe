@@ -9,7 +9,11 @@ import React, {
   KeyboardEvent,
 } from "react";
 import { useRouter } from "next/navigation";
+import ReactMarkdown from "react-markdown";
+import type { Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 import Sidebar from "../components/Sidebar";
+import Header from "../components/Header";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8001/v1";
 
@@ -103,148 +107,438 @@ interface ChartData {
   [key: string]: unknown; // Allow additional properties
 }
 
+function toChartLabel(value: unknown, fallback = ""): string {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === "string") return value.trim() || fallback;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+
+  if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    const preferredKeys = [
+      "label", "name", "month", "period", "region", "area", "metric", "category", "x", "id",
+    ];
+    for (const key of preferredKeys) {
+      const candidate = obj[key];
+      if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+      if (typeof candidate === "number" || typeof candidate === "boolean") return String(candidate);
+    }
+    const firstPrimitive = Object.values(obj).find(
+      (v) => typeof v === "string" || typeof v === "number" || typeof v === "boolean"
+    );
+    if (firstPrimitive !== undefined) return String(firstPrimitive);
+  }
+
+  return fallback || "N/A";
+}
+
+function trimLabel(label: string, max = 16) {
+  if (label.length <= max) return label;
+  return `${label.slice(0, max)}...`;
+}
+
+function inferYField(data: Array<Record<string, unknown>>) {
+  if (!data || data.length === 0) return "value";
+  const preferred = ["value", "y", "nps", "score", "amount", "total"];
+  const sample = data[0];
+  for (const key of preferred) {
+    if (typeof sample[key] === "number" || !Number.isNaN(Number(sample[key]))) return key;
+  }
+  const numericKey = Object.keys(sample).find((key) => typeof sample[key] === "number" || !Number.isNaN(Number(sample[key])));
+  return numericKey || "value";
+}
+
+function inferXField(data: Array<Record<string, unknown>>, yField: string) {
+  if (!data || data.length === 0) return "label";
+  const preferred = ["label", "month", "period", "time", "date", "region", "area", "name", "category", "x"];
+  const sample = data[0];
+  for (const key of preferred) {
+    if (key !== yField && key in sample) return key;
+  }
+  const stringKey = Object.keys(sample).find((key) => key !== yField && typeof sample[key] !== "number");
+  return stringKey || "label";
+}
+
+function inferSeriesField(data: Array<Record<string, unknown>>, xField: string, yField: string) {
+  if (!data || data.length === 0) return undefined;
+  const preferred = ["series", "metric", "type", "legend", "group", "dataset", "line", "tipe"];
+  const sample = data[0];
+  const keys = Object.keys(sample);
+
+  const preferredByLower = keys.find((key) => {
+    const lower = key.toLowerCase();
+    return preferred.includes(lower) && key !== xField && key !== yField;
+  });
+  if (preferredByLower) {
+    const uniq = new Set(data.map((row) => toChartLabel(row[preferredByLower])));
+    if (uniq.size > 1 && uniq.size < data.length) return preferredByLower;
+  }
+
+  for (const key of preferred) {
+    if (key in sample && key !== xField && key !== yField) {
+      const uniq = new Set(data.map((row) => toChartLabel(row[key])));
+      if (uniq.size > 1 && uniq.size < data.length) return key;
+    }
+  }
+
+  const candidates = keys.filter((key) => key !== xField && key !== yField);
+  for (const key of candidates) {
+    const uniq = new Set(data.map((row) => toChartLabel(row[key])));
+    if (uniq.size > 1 && uniq.size < data.length) return key;
+  }
+
+  return undefined;
+}
+
+function buildLegendItems(
+  chart: ChartData,
+  colors: string[],
+  fields?: { xField: string; seriesField?: string }
+) {
+  const xField = fields?.xField || chart.xField || "label";
+  const seriesField = fields?.seriesField || chart.seriesField;
+  const items: Array<{ label: string; color: string }> = [];
+
+  if (chart.type === "pie") {
+    const labels = Array.from(
+      new Set(
+        chart.data.map((row, idx) => toChartLabel(row[xField], `Item ${idx + 1}`))
+      )
+    );
+    return labels.map((label, idx) => ({
+      label: trimLabel(label, 22),
+      color: colors[idx % colors.length],
+    }));
+  }
+
+  if (seriesField) {
+    const seriesNames = Array.from(
+      new Set(
+        chart.data.map((row, idx) => toChartLabel(row[seriesField], `Series ${idx + 1}`))
+      )
+    );
+    return seriesNames.map((label, idx) => ({
+      label: trimLabel(label, 22),
+      color: colors[idx % colors.length],
+    }));
+  }
+
+  const singleLabel = trimLabel(chart.title || "Series", 26);
+  items.push({ label: singleLabel, color: colors[0] });
+  return items;
+}
+
 function Chart({ chart }: { chart: ChartData }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const hoverColumnsRef = useRef<Array<{
+    x: number;
+    xLabel: string;
+    rows: Array<{ series: string; value: number; color: string }>;
+  }>>([]);
+  const [tooltip, setTooltip] = useState<{
+    x: number;
+    y: number;
+    xLabel: string;
+    rows: Array<{ series: string; value: number; color: string }>;
+  } | null>(null);
+
+  const yField = chart.yField || inferYField(chart.data);
+  const xField = chart.xField || inferXField(chart.data, yField);
+  const seriesField = chart.seriesField || inferSeriesField(chart.data, xField, yField);
+  const chartType = String(chart.type || "").toLowerCase();
+  const isLineChart = chartType.includes("line");
+  const isBarChart = chartType.includes("bar") || chartType.includes("column");
+  const isPieChart = chartType.includes("pie");
+  const isTooltipChart = isLineChart || isBarChart;
+  const colors = chart.colorScheme || ['#5B8FF9', '#5AD8A6', '#F6BD16', '#E86452', '#6DC8EC'];
+  const legendItems = buildLegendItems(chart, colors, { xField, seriesField });
+  const legendSignature = legendItems.map((item) => `${item.label}:${item.color}`).join("|");
 
   useEffect(() => {
     if (!chart || !chart.data || chart.data.length === 0) return;
 
     const canvas = canvasRef.current;
     if (!canvas) return;
+    const parent = canvas.parentElement;
+    if (!parent) return;
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const drawChart = () => {
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      try {
 
-    // Clear canvas
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const cssWidth = Math.max(parent.clientWidth, 320);
+      const cssHeight = chart.seriesField ? 420 : 360;
+      const dpr = Math.max(window.devicePixelRatio || 1, 1);
 
-    const padding = 60;
-    const chartWidth = canvas.width - padding * 2;
-    const chartHeight = canvas.height - padding * 2;
+      canvas.style.width = `${cssWidth}px`;
+      canvas.style.height = `${cssHeight}px`;
+      canvas.width = Math.round(cssWidth * dpr);
+      canvas.height = Math.round(cssHeight * dpr);
 
-    // Get chart configuration
-    const colors = chart.colorScheme || ['#5B8FF9', '#5AD8A6', '#F6BD16', '#E86452', '#6DC8EC'];
-    const yField = chart.yField || 'value';
-    const xField = chart.xField || 'label';
-    const seriesField = chart.seriesField;
-    const hasMultipleSeries = seriesField && chart.data.length > 0;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, cssWidth, cssHeight);
+      ctx.imageSmoothingEnabled = true;
 
-    // ========== GROUP DATA BY SERIES ==========
-    const groupedData: Record<string, typeof chart.data> = {};
+      const padding = {
+        top: 54,
+        right: 24,
+        bottom: isPieChart ? 28 : 78,
+        left: 56,
+      };
+      const chartWidth = cssWidth - padding.left - padding.right;
+      const chartHeight = cssHeight - padding.top - padding.bottom;
+      if (chartWidth <= 0 || chartHeight <= 0) return;
 
-    if (hasMultipleSeries) {
-      chart.data.forEach(item => {
-        const key = String(item[seriesField]);
-        if (!groupedData[key]) {
-          groupedData[key] = [];
-        }
-        groupedData[key].push(item);
-      });
-    } else {
-      groupedData['default'] = chart.data;
-    }
+      // Get chart configuration
+      const hasMultipleSeries = !!(seriesField && chart.data.length > 0);
+      const rowCount = chart.data.length;
+      const xLabelStepBase = Math.max(1, Math.ceil(rowCount / 12));
 
-    // ========== GET UNIQUE X VALUES ==========
-    const uniqueXValues = Array.from(
-      new Set(chart.data.map(item => String(item[xField])))
-    ).sort();
-
-    // ========== CALCULATE MAX VALUE ==========
-    const maxValue = Math.max(
-      ...chart.data.map(d => Number(d[yField]) || 0)
-    ) * 1.1;
-
-    // ========== DRAW TITLE ==========
-    ctx.fillStyle = '#1a1a2e';
-    ctx.font = 'bold 16px Poppins, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(chart.title, canvas.width / 2, 25);
-
-    // Draw Y-axis
-    ctx.strokeStyle = '#e5e7eb';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(padding, padding);
-    ctx.lineTo(padding, canvas.height - padding);
-    ctx.stroke();
-
-    // Draw X-axis
-    ctx.beginPath();
-    ctx.moveTo(padding, canvas.height - padding);
-    ctx.lineTo(canvas.width - padding, canvas.height - padding);
-    ctx.stroke();
-
-    // Draw chart based on type
-    if (chart.type === 'bar') {
-      const barWidth = chartWidth / chart.data.length * 0.6;
-      const gap = chartWidth / chart.data.length;
-
-      chart.data.forEach((item: Record<string, unknown>, index: number) => {
-        const value = Number(item[yField]) || 0;
-        const barHeight = (value / maxValue) * chartHeight;
-        const x = padding + gap * index + (gap - barWidth) / 2;
-        const y = canvas.height - padding - barHeight;
-
-        // Draw bar
-        ctx.fillStyle = colors[index % colors.length];
-        ctx.fillRect(x, y, barWidth, barHeight);
-
-        // Draw value on top
-        ctx.fillStyle = '#1a1a2e';
-        ctx.font = '11px Poppins, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(value.toString(), x + barWidth / 2, y - 5);
-
-        // Draw X-axis label
-        ctx.save();
-        ctx.translate(x + barWidth / 2, canvas.height - padding + 15);
-        ctx.rotate(-Math.PI / 4);
-        ctx.textAlign = 'right';
-        ctx.fillStyle = '#6b7280';
-        ctx.font = '10px Poppins, sans-serif';
-        const label = String(item[xField] || index);
-        ctx.fillText(label.length > 10 ? label.substring(0, 10) + '...' : label, 0, 0);
-        ctx.restore();
-      });
-    } else if (chart.type === 'line') {
+      // ========== GROUP DATA BY SERIES ==========
+      const groupedData: Record<string, typeof chart.data> = {};
       if (hasMultipleSeries) {
-        // ========== MULTI-SERIES LINE CHART ==========
-        const seriesNames = Object.keys(groupedData);
+        chart.data.forEach((item) => {
+          const key = toChartLabel(item[seriesField as string], "Series");
+          if (!groupedData[key]) groupedData[key] = [];
+          groupedData[key].push(item);
+        });
+      } else {
+        groupedData.default = chart.data;
+      }
 
-        seriesNames.forEach((seriesName, seriesIndex) => {
-          const seriesData = groupedData[seriesName];
-          const color = colors[seriesIndex % colors.length];
+      // Keep source order so labels don't jump alphabetically.
+      const uniqueXValues = Array.from(
+        new Set(chart.data.map((item, index) => toChartLabel(item[xField], `#${index + 1}`)))
+      );
 
-          // Sort and create points for this series
-          const points = seriesData
-            .sort((a, b) => {
-              const aIndex = uniqueXValues.indexOf(String(a[xField]));
-              const bIndex = uniqueXValues.indexOf(String(b[xField]));
-              return aIndex - bIndex;
-            })
-            .map(item => {
-              const xIndex = uniqueXValues.indexOf(String(item[xField]));
-              const x = padding + (xIndex / (uniqueXValues.length - 1 || 1)) * chartWidth;
-              const value = Number(item[yField]) || 0;
-              const y = canvas.height - padding - (value / maxValue) * chartHeight;
-              return { x, y, value, label: item[xField] };
+      // ========== CALCULATE MAX VALUE ==========
+      const maxRawValue = Math.max(...chart.data.map((d) => Number(d[yField]) || 0));
+      const maxValue = Math.max(maxRawValue * 1.12, 1);
+
+      // ========== DRAW TITLE ==========
+      ctx.fillStyle = '#1a1a2e';
+      ctx.font = 'bold 16px Poppins, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(chart.title, cssWidth / 2, 28);
+
+      // Draw Y-axis
+      ctx.strokeStyle = '#e5e7eb';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(padding.left, padding.top);
+      ctx.lineTo(padding.left, cssHeight - padding.bottom);
+      ctx.stroke();
+
+      // Draw X-axis
+      ctx.beginPath();
+      ctx.moveTo(padding.left, cssHeight - padding.bottom);
+      ctx.lineTo(cssWidth - padding.right, cssHeight - padding.bottom);
+      ctx.stroke();
+
+      // Draw chart based on type
+      if (isBarChart) {
+        hoverColumnsRef.current = [];
+        const barWidth = chartWidth / chart.data.length * 0.6;
+        const gap = chartWidth / chart.data.length;
+        const xLabelStep = Math.max(1, Math.ceil(chart.data.length / 12));
+        const showValueLabels = rowCount <= 24;
+        const hoverMap = new Map<string, {
+          x: number;
+          xLabel: string;
+          rows: Array<{ series: string; value: number; color: string }>;
+        }>();
+
+        chart.data.forEach((item: Record<string, unknown>, index: number) => {
+          const value = Number(item[yField]) || 0;
+          const barHeight = (value / maxValue) * chartHeight;
+          const x = padding.left + gap * index + (gap - barWidth) / 2;
+          const y = cssHeight - padding.bottom - barHeight;
+
+          // Draw bar
+          ctx.fillStyle = colors[index % colors.length];
+          ctx.fillRect(x, y, barWidth, barHeight);
+
+          if (showValueLabels) {
+            // Draw value on top
+            ctx.fillStyle = '#1a1a2e';
+            ctx.font = '11px Poppins, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(value.toString(), x + barWidth / 2, y - 5);
+          }
+
+          if (index % xLabelStep === 0 || index === chart.data.length - 1) {
+            // Draw X-axis label
+            ctx.save();
+            ctx.translate(x + barWidth / 2, cssHeight - padding.bottom + 15);
+            ctx.rotate(-Math.PI / 5);
+            ctx.textAlign = 'right';
+            ctx.fillStyle = '#6b7280';
+            ctx.font = '10px Poppins, sans-serif';
+            const label = toChartLabel(item[xField], `#${index + 1}`);
+            ctx.fillText(trimLabel(label, 14), 0, 0);
+            ctx.restore();
+          }
+
+          const xLabel = toChartLabel(item[xField], `#${index + 1}`);
+          const seriesLabel = seriesField
+            ? toChartLabel(item[seriesField], "Series")
+            : (legendItems[0]?.label || "Series");
+          const existing = hoverMap.get(`${xLabel}`);
+          if (!existing) {
+            hoverMap.set(`${xLabel}`, {
+              x: x + barWidth / 2,
+              xLabel,
+              rows: [{ series: seriesLabel, value, color: colors[index % colors.length] }],
             });
+          } else {
+            existing.rows.push({ series: seriesLabel, value, color: colors[index % colors.length] });
+          }
+        });
+        hoverColumnsRef.current = Array.from(hoverMap.values()).sort((a, b) => a.x - b.x);
+      } else if (isLineChart) {
+        hoverColumnsRef.current = [];
+        if (hasMultipleSeries) {
+          // ========== MULTI-SERIES LINE CHART ==========
+          const seriesNames = Object.keys(groupedData);
+          const xLabelStep = Math.max(xLabelStepBase, Math.ceil(uniqueXValues.length / 12));
+          const showPointLabels = uniqueXValues.length <= 18 && seriesNames.length <= 4;
+          const hoverMap = new Map<string, {
+            x: number;
+            xLabel: string;
+            rows: Array<{ series: string; value: number; color: string }>;
+          }>();
+
+          seriesNames.forEach((seriesName, seriesIndex) => {
+            const seriesData = groupedData[seriesName];
+            const color = colors[seriesIndex % colors.length];
+
+            // Sort and create points for this series
+            const points = seriesData
+              .sort((a, b) => {
+                const aIndex = uniqueXValues.indexOf(toChartLabel(a[xField]));
+                const bIndex = uniqueXValues.indexOf(toChartLabel(b[xField]));
+                return aIndex - bIndex;
+              })
+              .map((item) => {
+                const xLabel = toChartLabel(item[xField]);
+                const xIndex = uniqueXValues.indexOf(xLabel);
+                const x = padding.left + (xIndex / (uniqueXValues.length - 1 || 1)) * chartWidth;
+                const value = Number(item[yField]) || 0;
+                const y = cssHeight - padding.bottom - (value / maxValue) * chartHeight;
+                return { x, y, value, label: xLabel };
+              });
+
+            // Draw line
+            ctx.strokeStyle = color;
+            ctx.lineWidth = chart.lineWidth || 2.5;
+            ctx.beginPath();
+
+            const smooth = chart.smooth === true;
+            if (smooth && points.length > 1) {
+              // Smooth curve (bezier)
+              ctx.moveTo(points[0].x, points[0].y);
+              for (let i = 0; i < points.length - 1; i++) {
+                const p0 = points[Math.max(0, i - 1)];
+                const p1 = points[i];
+                const p2 = points[i + 1];
+                const p3 = points[Math.min(points.length - 1, i + 2)];
+
+                const cp1x = p1.x + (p2.x - p0.x) / 6;
+                const cp1y = p1.y + (p2.y - p0.y) / 6;
+                const cp2x = p2.x - (p3.x - p1.x) / 6;
+                const cp2y = p2.y - (p3.y - p1.y) / 6;
+
+                ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+              }
+            } else {
+              // Straight lines
+              points.forEach((point, index) => {
+                if (index === 0) ctx.moveTo(point.x, point.y);
+                else ctx.lineTo(point.x, point.y);
+              });
+            }
+            ctx.stroke();
+
+            // Draw points
+            ctx.fillStyle = color;
+            const pointSize = chart.pointSize || 4;
+            const pointLabelStep = Math.max(1, Math.ceil(points.length / 10));
+
+            points.forEach((point, idx) => {
+              ctx.beginPath();
+              ctx.arc(point.x, point.y, pointSize, 0, Math.PI * 2);
+              ctx.fill();
+
+              if (showPointLabels && (idx % pointLabelStep === 0 || idx === points.length - 1)) {
+                // Draw value label
+                ctx.fillStyle = '#1a1a2e';
+                ctx.font = '10px Poppins, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(point.value.toFixed(1), point.x, point.y - pointSize - 4);
+                ctx.fillStyle = color; // Reset for next point
+              }
+
+              const existing = hoverMap.get(point.label);
+              if (!existing) {
+                hoverMap.set(point.label, {
+                  x: point.x,
+                  xLabel: point.label,
+                  rows: [{ series: seriesName, value: point.value, color }],
+                });
+              } else {
+                existing.rows.push({ series: seriesName, value: point.value, color });
+              }
+            });
+          });
+          hoverColumnsRef.current = Array.from(hoverMap.values()).sort((a, b) => a.x - b.x);
+
+          // ========== DRAW X-AXIS LABELS ==========
+          uniqueXValues.forEach((xValue, index) => {
+            if (index % xLabelStep !== 0 && index !== uniqueXValues.length - 1) return;
+            const x = padding.left + (index / (uniqueXValues.length - 1 || 1)) * chartWidth;
+            ctx.save();
+            ctx.translate(x, cssHeight - padding.bottom + 16);
+            ctx.rotate(-Math.PI / 5);
+            ctx.textAlign = 'right';
+            ctx.fillStyle = '#6b7280';
+            ctx.font = '10px Poppins, sans-serif';
+            ctx.fillText(trimLabel(String(xValue), 14), 0, 0);
+            ctx.restore();
+          });
+
+        } else {
+          // ========== SINGLE SERIES LINE CHART ==========
+          const gap = chartWidth / (chart.data.length - 1 || 1);
+
+          // Get all points coordinates
+          const points = chart.data.map((item: Record<string, unknown>, index: number) => {
+            const value = Number(item[yField]) || 0;
+            return {
+              x: padding.left + gap * index,
+              y: cssHeight - padding.bottom - (value / maxValue) * chartHeight,
+              value,
+            };
+          });
 
           // Draw line
-          ctx.strokeStyle = color;
-          ctx.lineWidth = chart.lineWidth || 2;
+          ctx.strokeStyle = colors[0];
+          ctx.lineWidth = (chart as Record<string, unknown>).lineWidth as number || 3;
           ctx.beginPath();
 
-          const smooth = chart.smooth === true;
+          // Check if smooth line is requested
+          const smooth = (chart as Record<string, unknown>).smooth === true;
+
           if (smooth && points.length > 1) {
-            // Smooth curve (bezier)
+            // Draw smooth curve using bezier curves
             ctx.moveTo(points[0].x, points[0].y);
+
             for (let i = 0; i < points.length - 1; i++) {
               const p0 = points[Math.max(0, i - 1)];
               const p1 = points[i];
               const p2 = points[i + 1];
               const p3 = points[Math.min(points.length - 1, i + 2)];
 
+              // Calculate control points for smooth curve
               const cp1x = p1.x + (p2.x - p0.x) / 6;
               const cp1y = p1.y + (p2.y - p0.y) / 6;
               const cp2x = p2.x - (p3.x - p1.x) / 6;
@@ -253,227 +547,275 @@ function Chart({ chart }: { chart: ChartData }) {
               ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
             }
           } else {
-            // Straight lines
+            // Draw straight lines
             points.forEach((point, index) => {
-              if (index === 0) ctx.moveTo(point.x, point.y);
-              else ctx.lineTo(point.x, point.y);
+              if (index === 0) {
+                ctx.moveTo(point.x, point.y);
+              } else {
+                ctx.lineTo(point.x, point.y);
+              }
             });
           }
+
           ctx.stroke();
+          const xLabelStep = Math.max(1, Math.ceil(chart.data.length / 12));
+          const pointLabelStep = Math.max(1, Math.ceil(points.length / 10));
+          const showPointLabels = chart.data.length <= 24;
+          const singleSeriesName = trimLabel(chart.title || "Series", 26);
+          hoverColumnsRef.current = [];
 
           // Draw points
-          ctx.fillStyle = color;
-          const pointSize = chart.pointSize || 4;
-          points.forEach(point => {
+          const pointSize = (chart as Record<string, unknown>).pointSize as number || 5;
+          points.forEach((point, index) => {
+            ctx.fillStyle = colors[0];
             ctx.beginPath();
             ctx.arc(point.x, point.y, pointSize, 0, Math.PI * 2);
             ctx.fill();
 
-            // Draw value label
-            ctx.fillStyle = '#1a1a2e';
-            ctx.font = '10px Poppins, sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText(point.value.toFixed(1), point.x, point.y - pointSize - 3);
-            ctx.fillStyle = color; // Reset for next point
+            if (showPointLabels && (index % pointLabelStep === 0 || index === points.length - 1)) {
+              // Draw value
+              ctx.fillStyle = '#1a1a2e';
+              ctx.font = '11px Poppins, sans-serif';
+              ctx.textAlign = 'center';
+              ctx.fillText(point.value.toString(), point.x, point.y - pointSize - 5);
+            }
+
+            if (index % xLabelStep === 0 || index === points.length - 1) {
+              // Draw X-axis label
+              ctx.save();
+              ctx.translate(point.x, cssHeight - padding.bottom + 15);
+              ctx.rotate(-Math.PI / 5);
+              ctx.textAlign = 'right';
+              ctx.fillStyle = '#6b7280';
+              ctx.font = '10px Poppins, sans-serif';
+              const item = chart.data[index];
+              const label = toChartLabel(item[xField], `#${index + 1}`);
+              ctx.fillText(trimLabel(label, 14), 0, 0);
+              ctx.restore();
+            }
+
+            const item = chart.data[index];
+            const pointLabel = toChartLabel(item[xField], `#${index + 1}`);
+            hoverColumnsRef.current.push({
+              x: point.x,
+              xLabel: pointLabel,
+              rows: [{ series: singleSeriesName, value: point.value, color: colors[0] }],
+            });
           });
-        });
+        }
+      } else if (isPieChart) {
+        const total = chart.data.reduce((sum: number, item: Record<string, unknown>) => {
+          return sum + (Number(item[yField]) || 0);
+        }, 0);
 
-        // ========== DRAW X-AXIS LABELS ==========
-        uniqueXValues.forEach((xValue, index) => {
-          const x = padding + (index / (uniqueXValues.length - 1 || 1)) * chartWidth;
-          ctx.save();
-          ctx.translate(x, canvas.height - padding + 15);
-          ctx.rotate(-Math.PI / 4);
-          ctx.textAlign = 'right';
-          ctx.fillStyle = '#6b7280';
-          ctx.font = '10px Poppins, sans-serif';
-          ctx.fillText(String(xValue), 0, 0);
-          ctx.restore();
-        });
+        let currentAngle = -Math.PI / 2;
+        const centerX = cssWidth / 2;
+        const centerY = cssHeight / 2 + 10;
+        const radius = Math.min(chartWidth, chartHeight) / 2.5;
 
-        // ========== DRAW LEGEND ==========
-        const legendY = canvas.height - padding + 40;
-        let legendX = padding;
+        chart.data.forEach((item: Record<string, unknown>, index: number) => {
+          const value = Number(item[yField]) || 0;
+          const sliceAngle = (value / total) * Math.PI * 2;
 
-        seriesNames.forEach((seriesName, index) => {
-          const color = colors[index % colors.length];
+          // Draw slice
+          ctx.fillStyle = colors[index % colors.length];
+          ctx.beginPath();
+          ctx.moveTo(centerX, centerY);
+          ctx.arc(centerX, centerY, radius, currentAngle, currentAngle + sliceAngle);
+          ctx.closePath();
+          ctx.fill();
 
-          // Color box
-          ctx.fillStyle = color;
-          ctx.fillRect(legendX, legendY, 12, 12);
+          // Draw label
+          const labelAngle = currentAngle + sliceAngle / 2;
+          const labelX = centerX + Math.cos(labelAngle) * (radius * 0.7);
+          const labelY = centerY + Math.sin(labelAngle) * (radius * 0.7);
 
-          // Series name
-          ctx.fillStyle = '#1a1a2e';
-          ctx.font = '11px Poppins, sans-serif';
-          ctx.textAlign = 'left';
-          ctx.fillText(seriesName, legendX + 16, legendY + 10);
+          const percentage = ((value / total) * 100).toFixed(1);
+          ctx.fillStyle = '#fff';
+          ctx.font = 'bold 12px Poppins, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(`${percentage}%`, labelX, labelY);
 
-          legendX += ctx.measureText(seriesName).width + 40;
+          currentAngle += sliceAngle;
         });
 
       } else {
-        // ========== SINGLE SERIES LINE CHART ==========
-        const gap = chartWidth / (chart.data.length - 1 || 1);
-
-        // Get all points coordinates
-        const points = chart.data.map((item: Record<string, unknown>, index: number) => {
-          const value = Number(item[yField]) || 0;
-          return {
-            x: padding + gap * index,
-            y: canvas.height - padding - (value / maxValue) * chartHeight,
-            value
-          };
-        });
-
-        // Draw line
-        ctx.strokeStyle = colors[0];
-        ctx.lineWidth = (chart as Record<string, unknown>).lineWidth as number || 3;
-        ctx.beginPath();
-
-        // Check if smooth line is requested
-        const smooth = (chart as Record<string, unknown>).smooth === true;
-
-        if (smooth && points.length > 1) {
-          // Draw smooth curve using bezier curves
-          ctx.moveTo(points[0].x, points[0].y);
-
-          for (let i = 0; i < points.length - 1; i++) {
-            const p0 = points[Math.max(0, i - 1)];
-            const p1 = points[i];
-            const p2 = points[i + 1];
-            const p3 = points[Math.min(points.length - 1, i + 2)];
-
-            // Calculate control points for smooth curve
-            const cp1x = p1.x + (p2.x - p0.x) / 6;
-            const cp1y = p1.y + (p2.y - p0.y) / 6;
-            const cp2x = p2.x - (p3.x - p1.x) / 6;
-            const cp2y = p2.y - (p3.y - p1.y) / 6;
-
-            ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
-          }
-        } else {
-          // Draw straight lines
-          points.forEach((point, index) => {
-            if (index === 0) {
-              ctx.moveTo(point.x, point.y);
-            } else {
-              ctx.lineTo(point.x, point.y);
-            }
-          });
-        }
-
-        ctx.stroke();
-
-        // Draw points
-        const pointSize = (chart as Record<string, unknown>).pointSize as number || 5;
-        points.forEach((point, index) => {
-          ctx.fillStyle = colors[0];
-          ctx.beginPath();
-          ctx.arc(point.x, point.y, pointSize, 0, Math.PI * 2);
-          ctx.fill();
-
-          // Draw value
-          ctx.fillStyle = '#1a1a2e';
-          ctx.font = '11px Poppins, sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillText(point.value.toString(), point.x, point.y - pointSize - 5);
-
-          // Draw X-axis label
-          ctx.save();
-          ctx.translate(point.x, canvas.height - padding + 15);
-          ctx.rotate(-Math.PI / 4);
-          ctx.textAlign = 'right';
-          ctx.fillStyle = '#6b7280';
-          ctx.font = '10px Poppins, sans-serif';
-          const item = chart.data[index];
-          const label = String(item[xField] || index);
-          ctx.fillText(label.length > 10 ? label.substring(0, 10) + '...' : label, 0, 0);
-          ctx.restore();
-        });
-      }
-    } else if (chart.type === 'pie') {
-      const total = chart.data.reduce((sum: number, item: Record<string, unknown>) => {
-        return sum + (Number(item[yField]) || 0);
-      }, 0);
-
-      let currentAngle = -Math.PI / 2;
-      const centerX = canvas.width / 2;
-      const centerY = canvas.height / 2 + 10;
-      const radius = Math.min(chartWidth, chartHeight) / 2.5;
-
-      chart.data.forEach((item: Record<string, unknown>, index: number) => {
-        const value = Number(item[yField]) || 0;
-        const sliceAngle = (value / total) * Math.PI * 2;
-
-        // Draw slice
-        ctx.fillStyle = colors[index % colors.length];
-        ctx.beginPath();
-        ctx.moveTo(centerX, centerY);
-        ctx.arc(centerX, centerY, radius, currentAngle, currentAngle + sliceAngle);
-        ctx.closePath();
-        ctx.fill();
-
-        // Draw label
-        const labelAngle = currentAngle + sliceAngle / 2;
-        const labelX = centerX + Math.cos(labelAngle) * (radius * 0.7);
-        const labelY = centerY + Math.sin(labelAngle) * (radius * 0.7);
-
-        const percentage = ((value / total) * 100).toFixed(1);
-        ctx.fillStyle = '#fff';
-        ctx.font = 'bold 12px Poppins, sans-serif';
+        // Unsupported chart type
+        ctx.fillStyle = '#6b7280';
+        ctx.font = '14px Poppins, sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText(`${percentage}%`, labelX, labelY);
+        ctx.fillText(`Chart type "${chart.type}" not supported`, cssWidth / 2, cssHeight / 2);
+      }
 
-        currentAngle += sliceAngle;
-      });
-
-      // Draw legend
-      const legendX = padding;
-      let legendY = padding;
-
-      chart.data.forEach((item: Record<string, unknown>, index: number) => {
-        const label = String(item[xField] || index);
-
-        // Color box
-        ctx.fillStyle = colors[index % colors.length];
-        ctx.fillRect(legendX, legendY, 15, 15);
-
-        // Label
-        ctx.fillStyle = '#1a1a2e';
-        ctx.font = '11px Poppins, sans-serif';
-        ctx.textAlign = 'left';
-        ctx.fillText(label, legendX + 20, legendY + 12);
-
-        legendY += 22;
-      });
-    } else {
-      // Unsupported chart type
+      // Draw Y-axis labels
       ctx.fillStyle = '#6b7280';
-      ctx.font = '14px Poppins, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(`Chart type "${chart.type}" not supported`, canvas.width / 2, canvas.height / 2);
-    }
+      ctx.font = '10px Poppins, sans-serif';
+      ctx.textAlign = 'right';
+      for (let i = 0; i <= 5; i++) {
+        const value = (maxValue / 5) * i;
+        const y = cssHeight - padding.bottom - (value / maxValue) * chartHeight;
+        ctx.fillText(Math.round(value).toString(), padding.left - 10, y + 3);
+      }
+      } catch (error) {
+        console.error("Chart render error:", error);
+        const fallbackWidth = Math.max(parent.clientWidth, 320);
+        const fallbackHeight = chart.seriesField ? 420 : 360;
+        canvas.style.width = `${fallbackWidth}px`;
+        canvas.style.height = `${fallbackHeight}px`;
+        canvas.width = fallbackWidth;
+        canvas.height = fallbackHeight;
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, fallbackWidth, fallbackHeight);
+        ctx.fillStyle = "#6b7280";
+        ctx.font = "14px Poppins, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("Chart gagal dirender", fallbackWidth / 2, fallbackHeight / 2);
+      }
+    };
 
-    // Draw Y-axis labels
-    ctx.fillStyle = '#6b7280';
-    ctx.font = '10px Poppins, sans-serif';
-    ctx.textAlign = 'right';
-    for (let i = 0; i <= 5; i++) {
-      const value = (maxValue / 5) * i;
-      const y = canvas.height - padding - (value / maxValue) * chartHeight;
-      ctx.fillText(Math.round(value).toString(), padding - 10, y + 3);
-    }
+    const rafId = requestAnimationFrame(drawChart);
 
-  }, [chart]);
+    const onResize = () => drawChart();
+    window.addEventListener('resize', onResize);
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (!isTooltipChart) {
+        setTooltip(null);
+        return;
+      }
+      const rect = canvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const cols = hoverColumnsRef.current;
+      if (!cols || cols.length === 0) {
+        setTooltip(null);
+        return;
+      }
+
+      let nearest = cols[0];
+      let minDist = Math.abs(mx - nearest.x);
+      for (let i = 1; i < cols.length; i++) {
+        const d = Math.abs(mx - cols[i].x);
+        if (d < minDist) {
+          minDist = d;
+          nearest = cols[i];
+        }
+      }
+
+      if (minDist > 40) {
+        setTooltip(null);
+        return;
+      }
+
+      const tooltipWidth = 240;
+      const tooltipHeight = 72 + nearest.rows.length * 22;
+      const xPos = Math.max(8, Math.min(mx + 12, rect.width - tooltipWidth - 8));
+      const yPos = Math.max(8, Math.min(my + 14, rect.height - tooltipHeight - 8));
+
+      setTooltip({
+        x: xPos,
+        y: yPos,
+        xLabel: nearest.xLabel,
+        rows: nearest.rows.sort((a, b) => b.value - a.value),
+      });
+    };
+
+    const onMouseLeave = () => setTooltip(null);
+    canvas.addEventListener("mousemove", onMouseMove);
+    canvas.addEventListener("mouseleave", onMouseLeave);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      window.removeEventListener('resize', onResize);
+      canvas.removeEventListener("mousemove", onMouseMove);
+      canvas.removeEventListener("mouseleave", onMouseLeave);
+    };
+
+  }, [chart, xField, yField, seriesField, legendSignature, isLineChart, isBarChart, isPieChart, isTooltipChart]);
 
   return (
-    <div style={{ marginTop: 12, borderRadius: 12, overflow: 'hidden', background: '#fff', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
+    <div style={{ marginTop: 12, borderRadius: 12, overflow: 'hidden', background: '#fff', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', position: "relative" }}>
       <canvas
         ref={canvasRef}
-        width={600}
-        height={chart.seriesField ? 400 : 350}
-        style={{ width: '100%', height: 'auto', display: 'block' }}
+        style={{ width: '100%', display: 'block' }}
       />
+      {tooltip && (
+        <div
+          style={{
+            position: "absolute",
+            left: tooltip.x,
+            top: tooltip.y,
+            minWidth: 180,
+            maxWidth: 240,
+            background: "rgba(17,24,39,0.92)",
+            color: "#fff",
+            borderRadius: 10,
+            padding: "8px 10px",
+            boxShadow: "0 10px 24px rgba(0,0,0,0.24)",
+            fontSize: "0.76rem",
+            lineHeight: 1.35,
+            zIndex: 5,
+            pointerEvents: "none",
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>{tooltip.xLabel}</div>
+          {tooltip.rows.map((row, idx) => (
+            <div key={`${row.series}-${idx}`} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: row.color, flexShrink: 0 }} />
+              <span style={{ flex: 1 }}>{row.series}</span>
+              <span style={{ fontWeight: 700 }}>{row.value.toFixed(2)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {legendItems.length > 0 && (
+        <div
+          style={{
+            borderTop: "1px solid #eef2f7",
+            padding: "10px 12px",
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 8,
+            alignItems: "center",
+            maxHeight: 96,
+            overflowY: "auto",
+            background: "#fcfdff",
+          }}
+        >
+          {legendItems.map((item, idx) => (
+            <div
+              key={`${item.label}-${idx}`}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "4px 10px",
+                border: "1px solid #e5e7eb",
+                borderRadius: 999,
+                background: "#ffffff",
+                fontSize: "0.76rem",
+                color: "#334155",
+                lineHeight: 1.2,
+                maxWidth: "100%",
+              }}
+              title={item.label}
+            >
+              <span
+                style={{
+                  width: 10,
+                  height: 10,
+                  borderRadius: "50%",
+                  background: item.color,
+                  flexShrink: 0,
+                }}
+              />
+              <span style={{ whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>
+                {item.label}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -489,6 +831,430 @@ function formatTime(date: Date) {
 
 function getInitial(email: string) {
   return email ? email[0].toUpperCase() : "U";
+}
+
+function isPipeRow(line: string) {
+  const trimmed = line.trim();
+  if (!trimmed.includes("|")) return false;
+  const pipeCount = (trimmed.match(/\|/g) || []).length;
+  return pipeCount >= 2;
+}
+
+function isSeparatorRow(line: string) {
+  const trimmed = line.trim();
+  return /^[:\-\s|]+$/.test(trimmed) && trimmed.includes("-");
+}
+
+function toBulletPoints(text: string) {
+  const parts = text
+    .split(/(?<=[.!?])\s+|;\s+/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+
+  if (parts.length <= 1) {
+    return `- ${text.trim()}`;
+  }
+
+  return parts.map((part) => `- ${part}`).join("\n");
+}
+
+function normalizeInsightLists(content: string) {
+  let normalized = content;
+
+  // Convert bullet symbol to markdown list bullet so ReactMarkdown renders proper lists.
+  normalized = normalized.replace(/^[ \t]*•\s+/gm, "- ");
+
+  // Convert one-line insight paragraph into bullet points.
+  normalized = normalized.replace(
+    /^(\s*(?:💡\s*)?(?:\*\*)?Insights?(?:\*\*)?\s*:\s*)(.+)$/gim,
+    (_match, heading: string, body: string) => {
+      const cleanedBody = body.trim();
+      if (!cleanedBody || cleanedBody.startsWith("- ")) return `${heading}${cleanedBody}`;
+      return `${heading}\n${toBulletPoints(cleanedBody)}`;
+    }
+  );
+
+  return normalized;
+}
+
+function extractInsightSection(content: string) {
+  const lines = content.split("\n");
+  const headingRegex = /^\s*(?:💡\s*)?(?:\*\*)?Insights?(?:\*\*)?\s*:?\s*$/i;
+  const bulletRegex = /^\s*(?:[-*]|\d+\.)\s+(.+)$/;
+
+  let headingIndex = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (headingRegex.test(lines[i])) {
+      headingIndex = i;
+      break;
+    }
+  }
+
+  if (headingIndex === -1) return null;
+
+  const points: string[] = [];
+  let currentPoint = "";
+  let pointer = headingIndex + 1;
+  let started = false;
+
+  while (pointer < lines.length) {
+    const line = lines[pointer];
+    const trimmed = line.trim();
+    const bulletMatch = line.match(bulletRegex);
+
+    if (bulletMatch) {
+      if (currentPoint) points.push(currentPoint.trim());
+      currentPoint = bulletMatch[1].trim();
+      started = true;
+      pointer += 1;
+      continue;
+    }
+
+    if (/^\s{2,}\S/.test(line) && currentPoint) {
+      currentPoint += ` ${trimmed}`;
+      pointer += 1;
+      continue;
+    }
+
+    if (trimmed === "") {
+      if (currentPoint) {
+        points.push(currentPoint.trim());
+        currentPoint = "";
+      }
+      pointer += 1;
+      if (started) break;
+      continue;
+    }
+
+    if (started) break;
+    return null;
+  }
+
+  if (currentPoint) points.push(currentPoint.trim());
+
+  const cleanedPoints = points
+    .map((point) => point.replace(/\*\*/g, "").trim())
+    .filter((point) => point.length > 0 && point !== "-" && point !== "•");
+
+  if (cleanedPoints.length === 0) return null;
+
+  return {
+    before: lines.slice(0, headingIndex).join("\n").trim(),
+    points: cleanedPoints,
+    after: lines.slice(pointer).join("\n").trim(),
+  };
+}
+
+function parseInsightCard(point: string) {
+  const clean = point.replace(/\*\*/g, "").trim();
+  if (!clean || clean === "-" || clean === "•") return null;
+
+  const colonMatch = clean.match(/^([^:]+):\s*(.+)$/);
+  if (colonMatch) {
+    return { value: colonMatch[1].trim(), label: colonMatch[2].trim() };
+  }
+
+  const metricMatch = clean.match(/^([+\-]?\$?\d[\d.,]*(?:\.\d+)?(?:[KMBT]|%|bn|jt|miliar|triliun)?)\s+(.+)$/i);
+  if (metricMatch) {
+    return { value: metricMatch[1].trim(), label: metricMatch[2].trim() };
+  }
+
+  return { value: clean, label: "" };
+}
+
+function isSeparatorCell(cell: string) {
+  return /^:?-{3,}:?$/.test(cell.trim());
+}
+
+function rebuildCollapsedPipeTableLine(line: string) {
+  const pipeCount = (line.match(/\|/g) || []).length;
+  if (pipeCount < 8 || !line.includes("|---")) return null;
+
+  const firstPipe = line.indexOf("|");
+  const lastPipe = line.lastIndexOf("|");
+  if (firstPipe < 0 || lastPipe <= firstPipe) return null;
+
+  const prefix = line.slice(0, firstPipe).trim();
+  const suffix = line.slice(lastPipe + 1).trim();
+  const tableRaw = line.slice(firstPipe, lastPipe + 1);
+
+  const tokens = tableRaw.split("|").map((t) => t.trim());
+  while (tokens.length > 0 && tokens[0] === "") tokens.shift();
+  while (tokens.length > 0 && tokens[tokens.length - 1] === "") tokens.pop();
+  if (tokens.length < 6) return null;
+
+  const separatorStart = tokens.findIndex(isSeparatorCell);
+  if (separatorStart < 2) return null;
+
+  let separatorEnd = separatorStart;
+  while (separatorEnd < tokens.length && isSeparatorCell(tokens[separatorEnd])) {
+    separatorEnd += 1;
+  }
+
+  const columnCount = separatorStart;
+  if (columnCount < 2) return null;
+
+  const headerCells = tokens.slice(0, columnCount);
+  if (headerCells.every((cell) => cell.length === 0)) return null;
+
+  const dataTokens = tokens.slice(separatorEnd);
+  if (dataTokens.length < columnCount) return null;
+
+  const rows: string[][] = [];
+  for (let i = 0; i < dataTokens.length; i += columnCount) {
+    const row = dataTokens.slice(i, i + columnCount);
+    if (row.length < columnCount) break;
+    rows.push(row);
+  }
+  if (rows.length === 0) return null;
+
+  const tableLines = [
+    `| ${headerCells.join(" | ")} |`,
+    `| ${new Array(columnCount).fill("---").join(" | ")} |`,
+    ...rows.map((row) => `| ${row.join(" | ")} |`),
+  ];
+
+  const parts = [];
+  if (prefix) parts.push(prefix);
+  parts.push(tableLines.join("\n"));
+  if (suffix) parts.push(suffix);
+  return parts.join("\n\n");
+}
+
+function normalizeCollapsedPipeTables(content: string) {
+  const lines = content.split("\n");
+  const out: string[] = [];
+
+  for (const line of lines) {
+    const rebuilt = rebuildCollapsedPipeTableLine(line);
+    if (!rebuilt) {
+      out.push(line);
+      continue;
+    }
+    out.push(...rebuilt.split("\n"));
+  }
+
+  return out.join("\n");
+}
+
+function normalizeMarkdownTables(content: string) {
+  const collapsedFixed = normalizeCollapsedPipeTables(content);
+  const lines = collapsedFixed.split("\n");
+  const out: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const prev = i > 0 ? lines[i - 1] : "";
+    const next = i < lines.length - 1 ? lines[i + 1] : "";
+
+    out.push(line);
+
+    const isTableStart =
+      isPipeRow(line) &&
+      isPipeRow(next) &&
+      !isSeparatorRow(line) &&
+      !isSeparatorRow(next) &&
+      (!isPipeRow(prev) || prev.trim() === "");
+
+    if (isTableStart) {
+      const cells = line
+        .trim()
+        .replace(/^\||\|$/g, "")
+        .split("|")
+        .map((cell) => cell.trim())
+        .filter((cell) => cell.length > 0);
+
+      if (cells.length >= 2) {
+        out.push(`| ${cells.map(() => "---").join(" | ")} |`);
+      }
+    }
+  }
+
+  return out.join("\n");
+}
+
+function MarkdownMessage({ content }: { content: string }) {
+  const normalizedContent = normalizeMarkdownTables(normalizeInsightLists(content));
+  const insight = extractInsightSection(normalizedContent);
+  const insightCards = insight
+    ? insight.points
+      .map(parseInsightCard)
+      .filter((card): card is { value: string; label: string } => card !== null && card.value.trim().length > 0)
+    : [];
+  const hasInsightCards = !!insight && insightCards.length > 0;
+
+  const markdownComponents: Components = {
+    p: ({ children }) => (
+      <p style={{ margin: "0 0 10px 0" }}>{children}</p>
+    ),
+    ul: ({ children }) => (
+      <ul style={{ margin: "0 0 10px 20px", padding: 0 }}>{children}</ul>
+    ),
+    ol: ({ children }) => (
+      <ol style={{ margin: "0 0 10px 20px", padding: 0 }}>{children}</ol>
+    ),
+    li: ({ children }) => (
+      <li style={{ marginBottom: 4 }}>{children}</li>
+    ),
+    table: ({ children }) => (
+      <div
+        style={{
+          margin: "10px 0",
+          overflowX: "auto",
+          border: "1px solid #e5e7eb",
+          borderRadius: 10,
+          background: "#ffffff",
+        }}
+      >
+        <table
+          style={{
+            width: "max-content",
+            minWidth: "100%",
+            borderCollapse: "separate",
+            borderSpacing: 0,
+            tableLayout: "auto",
+          }}
+        >
+          {children}
+        </table>
+      </div>
+    ),
+    thead: ({ children }) => (
+      <thead style={{ background: "#f8fafc" }}>{children}</thead>
+    ),
+    tr: ({ children }) => (
+      <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{children}</tr>
+    ),
+    th: ({ children }) => (
+      <th
+        style={{
+          borderBottom: "1px solid #e5e7eb",
+          borderRight: "1px solid #e5e7eb",
+          padding: "8px 10px",
+          textAlign: "left",
+          fontWeight: 600,
+          fontSize: "0.85rem",
+          whiteSpace: "nowrap",
+          wordBreak: "normal",
+        }}
+      >
+        {children}
+      </th>
+    ),
+    td: ({ children }) => (
+      <td
+        style={{
+          borderBottom: "1px solid #eef2f7",
+          borderRight: "1px solid #eef2f7",
+          padding: "8px 10px",
+          verticalAlign: "top",
+          fontSize: "0.85rem",
+          background: "#ffffff",
+          whiteSpace: "nowrap",
+          wordBreak: "normal",
+        }}
+      >
+        {children}
+      </td>
+    ),
+    code: ({ children }) => (
+      <code
+        style={{
+          background: "#f3f4f6",
+          borderRadius: 6,
+          padding: "2px 6px",
+          fontSize: "0.82rem",
+        }}
+      >
+        {children}
+      </code>
+    ),
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {!hasInsightCards && (
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+          {normalizedContent}
+        </ReactMarkdown>
+      )}
+
+      {hasInsightCards && insight && (
+        <>
+          {!!insight.before && (
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+              {insight.before}
+            </ReactMarkdown>
+          )}
+
+          <div
+            style={{
+              background: "linear-gradient(180deg, #fff6f1 0%, #fff1e9 100%)",
+              border: "1px solid #ffb596",
+              borderRadius: 14,
+              padding: "14px 14px 12px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 10,
+            }}
+          >
+            <div
+              style={{
+                color: "#d66b3d",
+                fontSize: "0.78rem",
+                letterSpacing: "0.08em",
+                fontWeight: 700,
+                textTransform: "uppercase",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <span>✦</span>
+              <span>Insight</span>
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+                gap: 10,
+              }}
+            >
+              {insightCards.map((card, idx) => {
+                return (
+                  <div
+                    key={`${idx}-${card.value}`}
+                    style={{
+                      borderRadius: 12,
+                      border: "1px solid #ffc4a8",
+                      background: "#FFEDE7",
+                      padding: "12px 14px",
+                    }}
+                  >
+                    <div style={{ color: "#cb6034", fontSize: "1.22rem", fontWeight: 700, lineHeight: 1.3 }}>
+                      {card.value}
+                    </div>
+                    {!!card.label && (
+                      <div style={{ marginTop: 4, color: "#7e604e", fontSize: "0.86rem", lineHeight: 1.5 }}>
+                        {card.label}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {!!insight.after && (
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+              {insight.after}
+            </ReactMarkdown>
+          )}
+        </>
+      )}
+    </div>
+  );
 }
 
 /* ─────────────────────────── Main Page ─────────────────────────── */
@@ -520,7 +1286,7 @@ export default function ChatPage() {
   const [lcMessages, setLcMessages] = useState<Record<string, unknown>[] | null>(null);
 
   /* ── Streaming mode toggle ── */
-  const [useStream, setUseStream] = useState(false);
+  const [useStream] = useState(false);
 
   /* ── Confirm modal (for DANGEROUS delete-all actions) ── */
   type ConfirmAction = "deleteAllLC" | "deleteAllHistory" | null;
@@ -1236,98 +2002,15 @@ export default function ChatPage() {
         onNewChat={handleNewChat}
         userEmail={userEmail}
         onLogout={handleLogout}
-        token={token}
       />
 
       {/* ══════════ MAIN CHAT AREA ══════════ */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
 
-        {/* Top bar */}
-        <header style={{
-          display: "flex", alignItems: "center", gap: 14,
-          padding: "16px 24px",
-          background: "linear-gradient(135deg, #ffffff 0%, #fafbfc 100%)",
-          borderBottom: "1px solid rgba(254,108,17,0.1)",
-          flexShrink: 0,
-          boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
-        }}>
-          <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            style={{ 
-              background: "none", 
-              border: "none", 
-              cursor: "pointer", 
-              fontSize: "1.3rem", 
-              color: "#2d3748", 
-              padding: "6px",
-              transition: "all .2s ease",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(254,108,17,0.08)"; (e.currentTarget as HTMLButtonElement).style.borderRadius = "8px"; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "none"; }}
-            title="Toggle sidebar"
-          >☰</button>
-          <h1 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 600, color: "#1a1a2e", flex: 1 }}>
-            {activeConv?.title ?? "Chatbot"}
-          </h1>
-          {/* Stream mode toggle */}
-          <button
-            onClick={() => setUseStream(v => !v)}
-            title={useStream ? "Mode: SSE Streaming (klik untuk JSON)" : "Mode: JSON (klik untuk Streaming)"}
-            style={{
-              background: useStream ? "linear-gradient(135deg, rgba(59,130,246,0.1) 0%, rgba(59,130,246,0.05) 100%)" : "rgba(0,0,0,0.02)",
-              border: `1px solid ${useStream ? "rgba(59,130,246,0.3)" : "rgba(0,0,0,0.08)"}`,
-              borderRadius: 10, padding: "7px 14px",
-              cursor: "pointer", fontSize: "0.8rem",
-              color: useStream ? "#3b82f6" : "#4D5959",
-              display: "flex", alignItems: "center", gap: 6,
-              fontFamily: "inherit", 
-              transition: "all .2s ease",
-              fontWeight: 500,
-            }}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.background = useStream ? "linear-gradient(135deg, rgba(59,130,246,0.15) 0%, rgba(59,130,246,0.08) 100%)" : "rgba(0,0,0,0.04)";
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.background = useStream ? "linear-gradient(135deg, rgba(59,130,246,0.1) 0%, rgba(59,130,246,0.05) 100%)" : "rgba(0,0,0,0.02)";
-            }}
-          >{useStream ? "⚡ Streaming" : "📦 JSON"}</button>
-
-          {/* Delete before timestamp */}
-          <button
-            onClick={() => {
-              setDeleteBeforeConvId(activeConv?.apiConversationId ?? "");
-              setDeleteBeforeTs(new Date().toISOString().slice(0, 16));
-              setDeleteBeforeModal(true);
-            }}
-            title="Hapus riwayat sebelum timestamp"
-            style={{
-              background: "none", border: "1px solid #fca5a5",
-              borderRadius: 8, padding: "5px 10px",
-              cursor: "pointer", fontSize: "0.78rem", color: "#ef4444",
-              display: "flex", alignItems: "center", gap: 5,
-              fontFamily: "inherit",
-            }}
-          >🗓 Hapus Sebelum</button>
-
-          {/* LangChain — all conversations button */}
-          <button
-            onClick={handleFetchLCConversations}
-            disabled={lcLoading}
-            title="Lihat semua percakapan LangChain"
-            style={{
-              background: "none", border: "1px solid #e5e7eb",
-              borderRadius: 8, padding: "5px 10px",
-              cursor: lcLoading ? "not-allowed" : "pointer",
-              fontSize: "0.78rem", color: "#4D5959",
-              display: "flex", alignItems: "center", gap: 6,
-              opacity: lcLoading ? 0.5 : 1,
-              fontFamily: "inherit",
-            }}
-          >🗂 LC Conversations</button>
-        </header>
+        {/* Header Component */}
+        <Header
+          conversationTitle={activeConv?.title ?? "Chatbot"}
+        />
 
         {/* ── All LangChain Conversations Modal ── */}
         {lcAllConvsOpen && (
@@ -1680,7 +2363,7 @@ export default function ChatPage() {
                   boxShadow: msg.role === "user" 
                     ? "0 4px 12px rgba(254, 108, 17, 0.25)" 
                     : "0 2px 8px rgba(0, 0, 0, 0.06)",
-                  whiteSpace: "pre-wrap",
+                  whiteSpace: msg.role === "user" ? "pre-wrap" : "normal",
                   wordBreak: "break-word",
                   border: msg.role === "user" ? "none" : "1px solid rgba(0,0,0,0.05)",
                 }}>
@@ -1697,7 +2380,11 @@ export default function ChatPage() {
                       ))}
                       <style>{`@keyframes bounce{0%,80%,100%{transform:translateY(0) scale(1)}40%{transform:translateY(-8px) scale(1.1)}}`}</style>
                     </span>
-                  ) : msg.content}
+                  ) : msg.role === "assistant" ? (
+                    <MarkdownMessage content={msg.content} />
+                  ) : (
+                    msg.content
+                  )}
                   <div style={{ fontSize: "0.75rem", opacity: msg.role === "user" ? 0.75 : 0.5, marginTop: 8, textAlign: msg.role === "user" ? "right" : "left" }}>
                     {formatTime(msg.createdAt)}
                   </div>
@@ -1710,62 +2397,6 @@ export default function ChatPage() {
                   "title" in msg.chart &&
                   "data" in msg.chart && (
                   <Chart chart={msg.chart as unknown as ChartData} />
-                )}
-
-                {/* Evidence — collapsible (assistant only) */}
-                {msg.role === "assistant" && msg.evidence && msg.evidence.length > 0 && (
-                  <details style={{
-                    background: "#f8f9fb",
-                    border: "1px solid #e5e7eb",
-                    borderRadius: 10,
-                    padding: "8px 12px",
-                    fontSize: "0.8rem",
-                    color: "#4D5959",
-                  }}>
-                    <summary style={{
-                      cursor: "pointer",
-                      fontWeight: 600,
-                      listStyle: "none",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                      userSelect: "none",
-                    }}>
-                      <span style={{ fontSize: "0.85rem" }}>📎</span>
-                      Lihat Sumber ({msg.evidence.length})
-                    </summary>
-                    <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
-                      {msg.evidence.map((ev, idx) => (
-                        <div key={idx} style={{
-                          background: "#ffffff",
-                          border: "1px solid #e5e7eb",
-                          borderRadius: 8,
-                          padding: "8px 10px",
-                          fontSize: "0.78rem",
-                          lineHeight: 1.5,
-                        }}>
-                          {!!ev.title && (
-                            <div style={{ fontWeight: 600, color: "#043133", marginBottom: 2 }}>
-                              {String(ev.title)}
-                            </div>
-                          )}
-                          {!!ev.content && (
-                            <div style={{ color: "#4D5959" }}>{String(ev.content)}</div>
-                          )}
-                          {!!ev.source && (
-                            <div style={{ color: "#838383", marginTop: 4, fontStyle: "italic" }}>
-                              Sumber: {String(ev.source)}
-                            </div>
-                          )}
-                          {!ev.title && !ev.content && !ev.source && (
-                            <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
-                              {JSON.stringify(ev, null, 2)}
-                            </pre>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </details>
                 )}
 
                 {/* Suggestions — quick-reply pills (assistant only) */}
