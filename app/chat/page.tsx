@@ -21,6 +21,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8001/v1";
 interface ClarificationOption {
   value: string;
   label: string;
+  description?: string | null;
 }
 
 interface ClarificationStep {
@@ -234,13 +235,25 @@ function ClarificationPanel({
               }}>
                 {isSelected ? "✓" : idx + 1}
               </span>
-              <span style={{
-                flex: 1, fontSize: "0.88rem",
-                color: isActive ? "#1a1a2e" : "#374151",
-                fontWeight: isActive ? 600 : 400,
-                lineHeight: 1.4,
-              }}>
-                {opt.label}
+              <span style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
+                <span style={{
+                  fontSize: "0.88rem",
+                  color: isActive ? "#1a1a2e" : "#374151",
+                  fontWeight: isActive ? 600 : 400,
+                  lineHeight: 1.4,
+                }}>
+                  {opt.label}
+                </span>
+                {opt.description && (
+                  <span style={{
+                    fontSize: "0.75rem",
+                    color: isActive ? "#FE6C11" : "#9ca3af",
+                    lineHeight: 1.3,
+                    fontWeight: 400,
+                  }}>
+                    {opt.description}
+                  </span>
+                )}
               </span>
               <span style={{
                 color: "#FE6C11",
