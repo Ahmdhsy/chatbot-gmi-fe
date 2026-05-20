@@ -194,7 +194,9 @@ function ClarificationPanel({
       {/* Options list (scrollable, max ~4 visible) */}
       <div style={{ maxHeight: 224, overflowY: "auto" }}>
         {step.options.map((opt, idx) => {
+          const isSelected = selections[step.id] === opt.value;
           const isHovered = hoveredOption === opt.value;
+          const isActive = isSelected || isHovered;
           return (
             <button
               key={opt.value}
@@ -208,39 +210,44 @@ function ClarificationPanel({
                 alignItems: "center",
                 gap: 12,
                 padding: "12px 18px",
-                background: isHovered ? "#fff8f5" : "transparent",
+                background: isSelected
+                  ? "linear-gradient(135deg, #fff3eb 0%, #fff8f5 100%)"
+                  : isHovered ? "#fff8f5" : "transparent",
                 border: "none",
                 borderBottom: "1px solid rgba(0,0,0,0.05)",
+                borderLeft: isSelected ? "3px solid #FE6C11" : "3px solid transparent",
                 cursor: disabled ? "not-allowed" : "pointer",
                 textAlign: "left",
                 fontFamily: "inherit",
-                transition: "background .12s",
+                transition: "background .12s, border-color .12s",
               }}
             >
               <span style={{
                 width: 26, height: 26, borderRadius: "50%", flexShrink: 0,
-                background: isHovered ? "#FE6C11" : "rgba(0,0,0,0.06)",
-                color: isHovered ? "#fff" : "#888",
+                background: isActive
+                  ? "linear-gradient(135deg, #FE6C11, #FF4400)"
+                  : "rgba(0,0,0,0.06)",
+                color: isActive ? "#fff" : "#888",
                 display: "flex", alignItems: "center", justifyContent: "center",
                 fontSize: "0.75rem", fontWeight: 700,
                 transition: "all .12s",
               }}>
-                {idx + 1}
+                {isSelected ? "✓" : idx + 1}
               </span>
               <span style={{
                 flex: 1, fontSize: "0.88rem",
-                color: isHovered ? "#1a1a2e" : "#374151",
-                fontWeight: isHovered ? 500 : 400,
+                color: isActive ? "#1a1a2e" : "#374151",
+                fontWeight: isActive ? 600 : 400,
                 lineHeight: 1.4,
               }}>
                 {opt.label}
               </span>
               <span style={{
                 color: "#FE6C11",
-                opacity: isHovered ? 1 : 0,
+                opacity: isActive ? 1 : 0,
                 fontSize: "1rem",
                 transition: "opacity .12s",
-              }}>→</span>
+              }}>{isSelected ? "✓" : "→"}</span>
             </button>
           );
         })}
