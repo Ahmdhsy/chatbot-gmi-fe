@@ -18,6 +18,22 @@ import Header from "../components/Header";
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8001/v1";
 
 /* ─────────────────────────── Types ─────────────────────────── */
+interface ClarificationOption {
+  value: string;
+  label: string;
+}
+
+interface ClarificationStep {
+  id: string;
+  question: string;
+  options: ClarificationOption[];
+}
+
+interface ClarificationData {
+  message: string;
+  steps: ClarificationStep[];
+}
+
 interface Message {
   id: string;
   role: "user" | "assistant";
@@ -27,6 +43,7 @@ interface Message {
   suggestions?: string[];
   chart?: Record<string, unknown> | null;
   data?: Record<string, unknown> | null;
+  clarification?: ClarificationData | null;
 }
 
 interface Conversation {
@@ -54,10 +71,233 @@ interface ChatApiResponse {
   data?: Record<string, unknown> | null;
   chart?: Record<string, unknown> | null;
   suggestions?: string[];
+  clarification?: ClarificationData | null;
 }
 
 type ToastType = "success" | "error" | "info";
 interface ToastState { type: ToastType; message: string }
+
+/* ─────────────────────────── ClarificationPanel ─────────────────────────── */
+function ClarificationPanel({
+  clarification,
+  onSubmit,
+  onClose,
+  disabled,
+}: {
+  clarification: ClarificationData;
+  onSubmit: (text: string) => void;
+  onClose: () => void;
+  disabled: boolean;
+}) {
+  const [currentStep, setCurrentStep] = useState(0);
+  const [selections, setSelections] = useState<Record<string, string>>({});
+  const [customText, setCustomText] = useState("");
+  const [hoveredOption, setHoveredOption] = useState<string | null>(null);
+
+  const totalSteps = clarification.steps.length;
+  const step = clarification.steps[currentStep];
+
+  function handleSelectOption(value: string) {
+    if (disabled) return;
+    const newSelections = { ...selections, [step.id]: value };
+    setSelections(newSelections);
+
+    if (currentStep < totalSteps - 1) {
+      setCurrentStep((s) => s + 1);
+    } else {
+      // Last step — build follow-up and submit
+      const parts = clarification.steps.map((s, idx) => {
+        const sel = idx === currentStep ? value : newSelections[s.id];
+        const opt = s.options.find((o) => o.value === sel);
+        return opt ? `${opt.label} (${opt.value})` : sel ?? "";
+      });
+      onSubmit(`Pilihan saya: ${parts.filter(Boolean).join(", ")}`);
+    }
+  }
+
+  function handleCustomSubmit() {
+    if (!customText.trim() || disabled) return;
+    onSubmit(customText.trim());
+  }
+
+  function handleCustomKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter") handleCustomSubmit();
+  }
+
+  const canGoPrev = currentStep > 0;
+  const canGoNext = currentStep < totalSteps - 1 && selections[step.id] !== undefined;
+
+  return (
+    <div style={{
+      background: "#ffffff",
+      borderRadius: 14,
+      border: "1px solid rgba(254,108,17,0.18)",
+      overflow: "hidden",
+      boxShadow: "0 -2px 16px rgba(0,0,0,0.08), 0 4px 16px rgba(0,0,0,0.06)",
+    }}>
+      {/* Header */}
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "14px 18px 12px",
+        borderBottom: "1px solid rgba(0,0,0,0.07)",
+        background: "linear-gradient(135deg, #fff8f5 0%, #ffffff 100%)",
+        gap: 12,
+      }}>
+        <span style={{
+          fontSize: "0.9rem",
+          fontWeight: 600,
+          color: "#1a1a2e",
+          flex: 1,
+          lineHeight: 1.4,
+        }}>
+          {step.question}
+        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+          {totalSteps > 1 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <button
+                onClick={() => canGoPrev && setCurrentStep((s) => s - 1)}
+                disabled={!canGoPrev}
+                style={{
+                  background: "none", border: "none", cursor: canGoPrev ? "pointer" : "default",
+                  color: canGoPrev ? "#FE6C11" : "#ccc", fontSize: "1.1rem", padding: "2px 4px",
+                  lineHeight: 1,
+                }}
+              >‹</button>
+              <span style={{ fontSize: "0.78rem", color: "#888", minWidth: 40, textAlign: "center" }}>
+                {currentStep + 1} of {totalSteps}
+              </span>
+              <button
+                onClick={() => canGoNext && setCurrentStep((s) => s + 1)}
+                disabled={!canGoNext}
+                style={{
+                  background: "none", border: "none", cursor: canGoNext ? "pointer" : "default",
+                  color: canGoNext ? "#FE6C11" : "#ccc", fontSize: "1.1rem", padding: "2px 4px",
+                  lineHeight: 1,
+                }}
+              >›</button>
+            </div>
+          )}
+          <button
+            onClick={onClose}
+            style={{
+              background: "none", border: "none", cursor: "pointer",
+              color: "#bbb", fontSize: "1.2rem", padding: "2px 4px",
+              lineHeight: 1, display: "flex", alignItems: "center",
+            }}
+          >×</button>
+        </div>
+      </div>
+
+      {/* Options list (scrollable, max ~4 visible) */}
+      <div style={{ maxHeight: 224, overflowY: "auto" }}>
+        {step.options.map((opt, idx) => {
+          const isHovered = hoveredOption === opt.value;
+          return (
+            <button
+              key={opt.value}
+              onClick={() => handleSelectOption(opt.value)}
+              onMouseEnter={() => setHoveredOption(opt.value)}
+              onMouseLeave={() => setHoveredOption(null)}
+              disabled={disabled}
+              style={{
+                width: "100%",
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                padding: "12px 18px",
+                background: isHovered ? "#fff8f5" : "transparent",
+                border: "none",
+                borderBottom: "1px solid rgba(0,0,0,0.05)",
+                cursor: disabled ? "not-allowed" : "pointer",
+                textAlign: "left",
+                fontFamily: "inherit",
+                transition: "background .12s",
+              }}
+            >
+              <span style={{
+                width: 26, height: 26, borderRadius: "50%", flexShrink: 0,
+                background: isHovered ? "#FE6C11" : "rgba(0,0,0,0.06)",
+                color: isHovered ? "#fff" : "#888",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: "0.75rem", fontWeight: 700,
+                transition: "all .12s",
+              }}>
+                {idx + 1}
+              </span>
+              <span style={{
+                flex: 1, fontSize: "0.88rem",
+                color: isHovered ? "#1a1a2e" : "#374151",
+                fontWeight: isHovered ? 500 : 400,
+                lineHeight: 1.4,
+              }}>
+                {opt.label}
+              </span>
+              <span style={{
+                color: "#FE6C11",
+                opacity: isHovered ? 1 : 0,
+                fontSize: "1rem",
+                transition: "opacity .12s",
+              }}>→</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Footer: custom text + Skip */}
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "10px 18px",
+        borderTop: "1px solid rgba(0,0,0,0.06)",
+        background: "#fafbfc",
+      }}>
+        <span style={{ color: "#bbb", fontSize: "1rem", flexShrink: 0 }}>✏</span>
+        <input
+          value={customText}
+          onChange={(e) => setCustomText(e.target.value)}
+          onKeyDown={handleCustomKeyDown}
+          placeholder="Ketik jawaban lain..."
+          disabled={disabled}
+          style={{
+            flex: 1,
+            background: "none",
+            border: "none",
+            outline: "none",
+            color: "#374151",
+            fontSize: "0.85rem",
+            fontFamily: "inherit",
+          }}
+        />
+        <button
+          onClick={onClose}
+          style={{
+            background: "none",
+            border: "1px solid rgba(0,0,0,0.12)",
+            borderRadius: 8,
+            color: "#888",
+            cursor: "pointer",
+            fontSize: "0.8rem",
+            fontFamily: "inherit",
+            padding: "5px 14px",
+            transition: "all .12s",
+          }}
+          onMouseEnter={e => {
+            (e.currentTarget as HTMLButtonElement).style.background = "rgba(0,0,0,0.05)";
+            (e.currentTarget as HTMLButtonElement).style.color = "#374151";
+          }}
+          onMouseLeave={e => {
+            (e.currentTarget as HTMLButtonElement).style.background = "none";
+            (e.currentTarget as HTMLButtonElement).style.color = "#888";
+          }}
+        >Skip</button>
+      </div>
+    </div>
+  );
+}
 
 /* ─────────────────────────── Toast ─────────────────────────── */
 function Toast({ type, message, onClose }: ToastState & { onClose: () => void }) {
@@ -1288,6 +1528,9 @@ export default function ChatPage() {
   /* ── Streaming mode toggle ── */
   const [useStream] = useState(false);
 
+  /* ── Clarification panel ── */
+  const [activeClarification, setActiveClarification] = useState<ClarificationData | null>(null);
+
   /* ── Confirm modal (for DANGEROUS delete-all actions) ── */
   type ConfirmAction = "deleteAllLC" | "deleteAllHistory" | null;
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
@@ -1744,6 +1987,7 @@ export default function ChatPage() {
       })
     );
     setInput("");
+    setActiveClarification(null);
     setStreaming(true);
 
     // Add empty assistant placeholder
@@ -1802,11 +2046,13 @@ export default function ChatPage() {
                         suggestions: payload?.suggestions ?? [],
                         chart: payload?.chart ?? null,
                         data: payload?.data ?? null,
+                        clarification: payload?.clarification ?? null,
                       }
                     ),
                   };
                 })
               );
+              if (payload?.clarification) setActiveClarification(payload.clarification);
             } else if (chunk.type === "progress") {
               // show progress stage as interim content
               const stage = String(chunk.stage ?? chunk.message ?? "");
@@ -1951,11 +2197,13 @@ export default function ChatPage() {
                 suggestions: data.suggestions ?? [],
                 chart: data.chart ?? null,
                 data: data.data ?? null,
+                clarification: data.clarification ?? null,
               }
             ),
           };
         })
       );
+      if (data.clarification) setActiveClarification(data.clarification);
 
     } catch (err: any) {
       const msg = err?.message === "Failed to fetch"
@@ -2439,6 +2687,21 @@ export default function ChatPage() {
           ))}
           <div ref={bottomRef} />
         </div>
+
+        {/* Clarification panel — floats above input when active */}
+        {activeClarification && (
+          <div style={{ padding: "0 32px 12px", flexShrink: 0 }}>
+            <ClarificationPanel
+              clarification={activeClarification}
+              onSubmit={(text) => {
+                setActiveClarification(null);
+                sendMessage(text);
+              }}
+              onClose={() => setActiveClarification(null)}
+              disabled={streaming}
+            />
+          </div>
+        )}
 
         {/* Input area */}
         <div style={{
