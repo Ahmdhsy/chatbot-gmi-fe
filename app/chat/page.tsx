@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import RadioButtonCheckedIcon from "@mui/icons-material/RadioButtonChecked";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 
@@ -56,6 +57,66 @@ interface Conversation {
   createdAt: Date;
 }
 
+interface StoredMessage extends Omit<Message, "createdAt"> {
+  createdAt: string;
+}
+
+interface StoredConversation extends Omit<Conversation, "createdAt" | "messages"> {
+  createdAt: string;
+  messages: StoredMessage[];
+}
+
+interface StoredHistoryPayload {
+  activeId: string;
+  conversations: StoredConversation[];
+}
+
+interface ApiErrorDetail {
+  loc?: Array<string | number>;
+  msg?: string;
+  type?: string;
+}
+
+interface LangchainConversationMeta {
+  conversationId?: string;
+  id?: string;
+  session_id?: string;
+  sessionId?: string;
+  messageCount?: number;
+  message_count?: number;
+  lastActivity?: string | null;
+  last_activity?: string | null;
+}
+
+interface LangchainConversationListResponse {
+  totalConversations?: number;
+  conversations?: LangchainConversationMeta[];
+}
+
+interface LangchainHistoryItem {
+  role?: string;
+  question?: string;
+  answer?: string;
+  timestamp?: string | null;
+}
+
+interface LangchainHistoryResponse {
+  conversationId?: string;
+  source?: string;
+  history?: LangchainHistoryItem[];
+}
+
+interface LangchainRawMessage {
+  type?: string;
+  role?: string;
+  content?: string;
+}
+
+interface LangchainMessagesResponse {
+  conversationId?: string;
+  messages?: LangchainRawMessage[];
+}
+
 /* ── API request / response shapes ── */
 interface ChatApiRequest {
   conversationId: string;
@@ -73,6 +134,8 @@ interface ChatApiResponse {
   chart?: Record<string, unknown> | null;
   suggestions?: string[];
   clarification?: ClarificationData | null;
+  clarification_data?: ClarificationData | null;
+  description_clarification_section?: ClarificationData | null;
 }
 
 type ToastType = "success" | "error" | "info";
@@ -130,9 +193,9 @@ function ClarificationPanel({
 
   return (
     <div style={{
-      background: "#ffffff",
+      background: "#262626",
       borderRadius: 14,
-      border: "1px solid rgba(254,108,17,0.18)",
+      border: "1px solid #3a3a3a",
       overflow: "hidden",
       boxShadow: "0 -2px 16px rgba(0,0,0,0.08), 0 4px 16px rgba(0,0,0,0.06)",
     }}>
@@ -143,13 +206,13 @@ function ClarificationPanel({
         justifyContent: "space-between",
         padding: "14px 18px 12px",
         borderBottom: "1px solid rgba(0,0,0,0.07)",
-        background: "linear-gradient(135deg, #fff8f5 0%, #ffffff 100%)",
+        background: "linear-gradient(135deg, #2a2a2a 0%, #252525 100%)",
         gap: 12,
       }}>
         <span style={{
           fontSize: "0.9rem",
           fontWeight: 600,
-          color: "#1a1a2e",
+          color: "#e1dccc",
           flex: 1,
           lineHeight: 1.4,
         }}>
@@ -167,7 +230,7 @@ function ClarificationPanel({
                   lineHeight: 1,
                 }}
               >‹</button>
-              <span style={{ fontSize: "0.78rem", color: "#888", minWidth: 40, textAlign: "center" }}>
+              <span style={{ fontSize: "0.78rem", color: "#8f8f8a", minWidth: 40, textAlign: "center" }}>
                 {currentStep + 1} of {totalSteps}
               </span>
               <button
@@ -273,7 +336,7 @@ function ClarificationPanel({
         gap: 8,
         padding: "10px 18px",
         borderTop: "1px solid rgba(0,0,0,0.06)",
-        background: "#fafbfc",
+        background: "#232323",
       }}>
         <span style={{ color: "#bbb", fontSize: "1rem", flexShrink: 0 }}>✏</span>
         <input
@@ -287,7 +350,7 @@ function ClarificationPanel({
             background: "none",
             border: "none",
             outline: "none",
-            color: "#374151",
+            color: "#d5d0c5",
             fontSize: "0.85rem",
             fontFamily: "inherit",
           }}
@@ -295,10 +358,10 @@ function ClarificationPanel({
         <button
           onClick={onClose}
           style={{
-            background: "none",
-            border: "1px solid rgba(0,0,0,0.12)",
+            background: "#1d1d1d",
+            border: "1px solid #3a3a3a",
             borderRadius: 8,
-            color: "#888",
+            color: "#8f8f8a",
             cursor: "pointer",
             fontSize: "0.8rem",
             fontFamily: "inherit",
@@ -577,7 +640,7 @@ function Chart({ chart }: { chart: ChartData }) {
 
       // ========== DRAW TITLE ==========
       ctx.fillStyle = '#1a1a2e';
-      ctx.font = 'bold 16px Poppins, sans-serif';
+      ctx.font = "bold 16px Inter, Tahoma, Geneva, Verdana, sans-serif";
       ctx.textAlign = 'center';
       ctx.fillText(chart.title, cssWidth / 2, 28);
 
@@ -621,7 +684,7 @@ function Chart({ chart }: { chart: ChartData }) {
           if (showValueLabels) {
             // Draw value on top
             ctx.fillStyle = '#1a1a2e';
-            ctx.font = '11px Poppins, sans-serif';
+            ctx.font = "11px Inter, Tahoma, Geneva, Verdana, sans-serif";
             ctx.textAlign = 'center';
             ctx.fillText(value.toString(), x + barWidth / 2, y - 5);
           }
@@ -633,7 +696,7 @@ function Chart({ chart }: { chart: ChartData }) {
             ctx.rotate(-Math.PI / 5);
             ctx.textAlign = 'right';
             ctx.fillStyle = '#6b7280';
-            ctx.font = '10px Poppins, sans-serif';
+            ctx.font = "10px Inter, Tahoma, Geneva, Verdana, sans-serif";
             const label = toChartLabel(item[xField], `#${index + 1}`);
             ctx.fillText(trimLabel(label, 14), 0, 0);
             ctx.restore();
@@ -732,7 +795,7 @@ function Chart({ chart }: { chart: ChartData }) {
               if (showPointLabels && (idx % pointLabelStep === 0 || idx === points.length - 1)) {
                 // Draw value label
                 ctx.fillStyle = '#1a1a2e';
-                ctx.font = '10px Poppins, sans-serif';
+                ctx.font = "10px Inter, Tahoma, Geneva, Verdana, sans-serif";
                 ctx.textAlign = 'center';
                 ctx.fillText(point.value.toFixed(1), point.x, point.y - pointSize - 4);
                 ctx.fillStyle = color; // Reset for next point
@@ -761,7 +824,7 @@ function Chart({ chart }: { chart: ChartData }) {
             ctx.rotate(-Math.PI / 5);
             ctx.textAlign = 'right';
             ctx.fillStyle = '#6b7280';
-            ctx.font = '10px Poppins, sans-serif';
+            ctx.font = "10px Inter, Tahoma, Geneva, Verdana, sans-serif";
             ctx.fillText(trimLabel(String(xValue), 14), 0, 0);
             ctx.restore();
           });
@@ -835,7 +898,7 @@ function Chart({ chart }: { chart: ChartData }) {
             if (showPointLabels && (index % pointLabelStep === 0 || index === points.length - 1)) {
               // Draw value
               ctx.fillStyle = '#1a1a2e';
-              ctx.font = '11px Poppins, sans-serif';
+              ctx.font = "11px Inter, Tahoma, Geneva, Verdana, sans-serif";
               ctx.textAlign = 'center';
               ctx.fillText(point.value.toString(), point.x, point.y - pointSize - 5);
             }
@@ -847,7 +910,7 @@ function Chart({ chart }: { chart: ChartData }) {
               ctx.rotate(-Math.PI / 5);
               ctx.textAlign = 'right';
               ctx.fillStyle = '#6b7280';
-              ctx.font = '10px Poppins, sans-serif';
+              ctx.font = "10px Inter, Tahoma, Geneva, Verdana, sans-serif";
               const item = chart.data[index];
               const label = toChartLabel(item[xField], `#${index + 1}`);
               ctx.fillText(trimLabel(label, 14), 0, 0);
@@ -892,7 +955,7 @@ function Chart({ chart }: { chart: ChartData }) {
 
           const percentage = ((value / total) * 100).toFixed(1);
           ctx.fillStyle = '#fff';
-          ctx.font = 'bold 12px Poppins, sans-serif';
+          ctx.font = "bold 12px Inter, Tahoma, Geneva, Verdana, sans-serif";
           ctx.textAlign = 'center';
           ctx.fillText(`${percentage}%`, labelX, labelY);
 
@@ -902,14 +965,14 @@ function Chart({ chart }: { chart: ChartData }) {
       } else {
         // Unsupported chart type
         ctx.fillStyle = '#6b7280';
-        ctx.font = '14px Poppins, sans-serif';
+        ctx.font = "14px Inter, Tahoma, Geneva, Verdana, sans-serif";
         ctx.textAlign = 'center';
         ctx.fillText(`Chart type "${chart.type}" not supported`, cssWidth / 2, cssHeight / 2);
       }
 
       // Draw Y-axis labels
       ctx.fillStyle = '#6b7280';
-      ctx.font = '10px Poppins, sans-serif';
+      ctx.font = "10px Inter, Tahoma, Geneva, Verdana, sans-serif";
       ctx.textAlign = 'right';
       for (let i = 0; i <= 5; i++) {
         const value = (maxValue / 5) * i;
@@ -927,7 +990,7 @@ function Chart({ chart }: { chart: ChartData }) {
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.clearRect(0, 0, fallbackWidth, fallbackHeight);
         ctx.fillStyle = "#6b7280";
-        ctx.font = "14px Poppins, sans-serif";
+        ctx.font = "14px Inter, Tahoma, Geneva, Verdana, sans-serif";
         ctx.textAlign = "center";
         ctx.fillText("Chart gagal dirender", fallbackWidth / 2, fallbackHeight / 2);
       }
@@ -994,7 +1057,7 @@ function Chart({ chart }: { chart: ChartData }) {
   }, [chart, xField, yField, seriesField, legendSignature, isLineChart, isBarChart, isPieChart, isTooltipChart]);
 
   return (
-    <div style={{ marginTop: 12, borderRadius: 12, overflow: 'hidden', background: '#fff', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', position: "relative" }}>
+    <div style={{ marginTop: 12, borderRadius: 12, overflow: 'hidden', background: '#262626', boxShadow: '0 6px 18px rgba(0,0,0,0.3)', border: "1px solid #3a3a3a", position: "relative" }}>
       <canvas
         ref={canvasRef}
         style={{ width: '100%', display: 'block' }}
@@ -1007,8 +1070,8 @@ function Chart({ chart }: { chart: ChartData }) {
             top: tooltip.y,
             minWidth: 180,
             maxWidth: 240,
-            background: "rgba(17,24,39,0.92)",
-            color: "#fff",
+            background: "rgba(25,25,25,0.94)",
+            color: "#ece7db",
             borderRadius: 10,
             padding: "8px 10px",
             boxShadow: "0 10px 24px rgba(0,0,0,0.24)",
@@ -1031,7 +1094,7 @@ function Chart({ chart }: { chart: ChartData }) {
       {legendItems.length > 0 && (
         <div
           style={{
-            borderTop: "1px solid #eef2f7",
+            borderTop: "1px solid #383838",
             padding: "10px 12px",
             display: "flex",
             flexWrap: "wrap",
@@ -1039,7 +1102,7 @@ function Chart({ chart }: { chart: ChartData }) {
             alignItems: "center",
             maxHeight: 96,
             overflowY: "auto",
-            background: "#fcfdff",
+            background: "#232323",
           }}
         >
           {legendItems.map((item, idx) => (
@@ -1050,11 +1113,11 @@ function Chart({ chart }: { chart: ChartData }) {
                 alignItems: "center",
                 gap: 6,
                 padding: "4px 10px",
-                border: "1px solid #e5e7eb",
+                border: "1px solid #47413a",
                 borderRadius: 999,
-                background: "#ffffff",
+                background: "#2b2825",
                 fontSize: "0.76rem",
-                color: "#334155",
+                color: "#d7d1c3",
                 lineHeight: 1.2,
                 maxWidth: "100%",
               }}
@@ -1091,6 +1154,118 @@ function formatTime(date: Date) {
 
 function getInitial(email: string) {
   return email ? email[0].toUpperCase() : "U";
+}
+
+function getErrorMessage(err: unknown, fallback: string) {
+  if (err instanceof Error) return err.message || fallback;
+  if (typeof err === "string") return err || fallback;
+  return fallback;
+}
+
+function toConversationTitle(text: string, fallback: string) {
+  const trimmed = text.trim();
+  if (!trimmed) return fallback;
+  return trimmed.length > 50 ? `${trimmed.slice(0, 50)}…` : trimmed;
+}
+
+function getTimeGreeting(date: Date) {
+  const hour = date.getHours();
+  if (hour >= 4 && hour < 11) return "Pagi";
+  if (hour >= 11 && hour < 15) return "Siang";
+  if (hour >= 15 && hour < 18) return "Sore";
+  return "Malam";
+}
+
+function normalizeHistoryMessages(raw: unknown): Message[] {
+  if (Array.isArray(raw)) {
+    return raw.map((item: Record<string, unknown>) => ({
+      id: uid(),
+      role: (item.type === "human" || item.role === "user") ? "user" : "assistant",
+      content: String(item.content ?? item.text ?? ""),
+      createdAt: item.created_at ? new Date(String(item.created_at)) : new Date(),
+    }));
+  }
+
+  const parsed = raw as LangchainHistoryResponse | null;
+  const history = Array.isArray(parsed?.history) ? parsed.history : [];
+  const messages: Message[] = [];
+
+  // Backend returns newest-first; reverse to show chronological order
+  history.slice().reverse().forEach((item) => {
+    const timestamp = item.timestamp ? new Date(item.timestamp) : new Date();
+    if (item.question) {
+      messages.push({
+        id: uid(),
+        role: "user",
+        content: item.question,
+        createdAt: timestamp,
+      });
+    }
+    if (item.answer) {
+      messages.push({
+        id: uid(),
+        role: "assistant",
+        content: item.answer,
+        createdAt: timestamp,
+      });
+    }
+  });
+
+  return messages;
+}
+
+const HISTORY_STORAGE_PREFIX = "chat_history:";
+
+function buildHistoryStorageKey(email: string) {
+  const safeEmail = email?.trim().toLowerCase() || "user";
+  return `${HISTORY_STORAGE_PREFIX}${safeEmail}`;
+}
+
+function serializeHistory(conversations: Conversation[], activeId: string) {
+  const payload: StoredHistoryPayload = {
+    activeId,
+    conversations: conversations.map((conv) => ({
+      ...conv,
+      createdAt: conv.createdAt.toISOString(),
+      messages: conv.messages.map((msg) => ({
+        ...msg,
+        createdAt: msg.createdAt.toISOString(),
+      })),
+    })),
+  };
+  return JSON.stringify(payload);
+}
+
+function hydrateHistory(raw: string | null) {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as StoredHistoryPayload;
+    if (!parsed || !Array.isArray(parsed.conversations)) return null;
+    const conversations: Conversation[] = parsed.conversations.map((conv) => ({
+      id: typeof conv.id === "string" ? conv.id : uid(),
+      title: typeof conv.title === "string" ? conv.title : "Percakapan baru",
+      apiConversationId: typeof conv.apiConversationId === "string" ? conv.apiConversationId : undefined,
+      createdAt: conv.createdAt ? new Date(conv.createdAt) : new Date(),
+      messages: Array.isArray(conv.messages)
+        ? conv.messages.map((msg) => ({
+            id: typeof msg.id === "string" ? msg.id : uid(),
+            role: msg.role === "assistant" ? "assistant" : "user",
+            content: typeof msg.content === "string" ? msg.content : "",
+            createdAt: msg.createdAt ? new Date(msg.createdAt) : new Date(),
+            evidence: Array.isArray(msg.evidence) ? msg.evidence : undefined,
+            suggestions: Array.isArray(msg.suggestions) ? msg.suggestions : undefined,
+            chart: msg.chart ?? null,
+            data: msg.data ?? null,
+            clarification: msg.clarification ?? null,
+          }))
+        : [],
+    }));
+
+    const activeId = typeof parsed.activeId === "string" ? parsed.activeId : "";
+    return { conversations, activeId };
+  } catch {
+    return null;
+  }
 }
 
 function isPipeRow(line: string) {
@@ -1135,6 +1310,60 @@ function normalizeInsightLists(content: string) {
   );
 
   return normalized;
+}
+
+function normalizeClarification(
+  raw: unknown,
+  fallbackSuggestions?: string[]
+): ClarificationData | null {
+  if (raw && typeof raw === "object") {
+    const obj = raw as Record<string, unknown>;
+    const stepsRaw = Array.isArray(obj.steps) ? obj.steps : [];
+    const normalizedSteps = stepsRaw
+      .map((step) => {
+        const stepObj = step as Record<string, unknown>;
+        const optionsRaw = Array.isArray(stepObj.options) ? stepObj.options : [];
+        const options = optionsRaw
+          .map((opt) => {
+            const optObj = opt as Record<string, unknown>;
+            const value = String(optObj.value ?? "").trim();
+            const label = String(optObj.label ?? value).trim();
+            const description = typeof optObj.description === "string" ? optObj.description : null;
+            if (!value || !label) return null;
+            return { value, label, description } as ClarificationOption;
+          })
+          .filter((x): x is ClarificationOption => x !== null);
+        const id = String(stepObj.id ?? "").trim();
+        const question = String(stepObj.question ?? "").trim();
+        if (!id || !question || options.length === 0) return null;
+        return { id, question, options } as ClarificationStep;
+      })
+      .filter((x): x is ClarificationStep => x !== null);
+
+    const message = String(obj.message ?? "").trim();
+    if (message && normalizedSteps.length > 0) {
+      return { message, steps: normalizedSteps };
+    }
+  }
+
+  if (Array.isArray(fallbackSuggestions) && fallbackSuggestions.length > 0) {
+    return {
+      message: "Silakan pilih pertanyaan lanjutan yang ingin Anda tanyakan:",
+      steps: [
+        {
+          id: "followup",
+          question: "Pilih pertanyaan:",
+          options: fallbackSuggestions.map((s, idx) => ({
+            value: `suggestion_${idx + 1}`,
+            label: s,
+            description: null,
+          })),
+        },
+      ],
+    };
+  }
+
+  return null;
 }
 
 function extractInsightSection(content: string) {
@@ -1361,9 +1590,9 @@ function MarkdownMessage({ content }: { content: string }) {
         style={{
           margin: "10px 0",
           overflowX: "auto",
-          border: "1px solid #e5e7eb",
+          border: "1px solid #3c3c3c",
           borderRadius: 10,
-          background: "#ffffff",
+          background: "#252525",
         }}
       >
         <table
@@ -1380,20 +1609,21 @@ function MarkdownMessage({ content }: { content: string }) {
       </div>
     ),
     thead: ({ children }) => (
-      <thead style={{ background: "#f8fafc" }}>{children}</thead>
+      <thead style={{ background: "#2e2b28" }}>{children}</thead>
     ),
     tr: ({ children }) => (
-      <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{children}</tr>
+      <tr style={{ borderBottom: "1px solid #3c3c3c" }}>{children}</tr>
     ),
     th: ({ children }) => (
       <th
         style={{
-          borderBottom: "1px solid #e5e7eb",
-          borderRight: "1px solid #e5e7eb",
+          borderBottom: "1px solid #3c3c3c",
+          borderRight: "1px solid #3c3c3c",
           padding: "8px 10px",
           textAlign: "left",
           fontWeight: 600,
           fontSize: "0.85rem",
+          color: "#ece7db",
           whiteSpace: "nowrap",
           wordBreak: "normal",
         }}
@@ -1404,12 +1634,13 @@ function MarkdownMessage({ content }: { content: string }) {
     td: ({ children }) => (
       <td
         style={{
-          borderBottom: "1px solid #eef2f7",
-          borderRight: "1px solid #eef2f7",
+          borderBottom: "1px solid #343434",
+          borderRight: "1px solid #343434",
           padding: "8px 10px",
           verticalAlign: "top",
           fontSize: "0.85rem",
-          background: "#ffffff",
+          color: "#d8d2c4",
+          background: "#252525",
           whiteSpace: "nowrap",
           wordBreak: "normal",
         }}
@@ -1420,10 +1651,12 @@ function MarkdownMessage({ content }: { content: string }) {
     code: ({ children }) => (
       <code
         style={{
-          background: "#f3f4f6",
+          background: "#2f2c29",
+          color: "#f0eadc",
           borderRadius: 6,
           padding: "2px 6px",
           fontSize: "0.82rem",
+          border: "1px solid #47413a",
         }}
       >
         {children}
@@ -1522,12 +1755,15 @@ export default function ChatPage() {
   const router = useRouter();
   const [token, setToken] = useState<string>("");
   const [userEmail, setUserEmail] = useState<string>("");
+  const [userName, setUserName] = useState<string>("");
+  const [sessionGreeting] = useState<string>(() => getTimeGreeting(new Date()));
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string>("");
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [toast, setToast] = useState<ToastState | null>(null);
+  const [historyReady, setHistoryReady] = useState(false);
 
   /* ── Cache panel state ── */
   const [cacheStats, setCacheStats] = useState<Record<string, unknown> | null>(null);
@@ -1574,17 +1810,137 @@ export default function ChatPage() {
     }
     setToken(t);
     // decode email from JWT payload (base64)
+    let resolvedEmail = "User";
     try {
       const payload = JSON.parse(atob(t.split(".")[1]));
-      setUserEmail(payload?.sub ?? payload?.email ?? "User");
-    } catch { setUserEmail("User"); }
+      resolvedEmail = payload?.sub ?? payload?.email ?? "User";
+    } catch {
+      resolvedEmail = "User";
+    }
+    setUserEmail(resolvedEmail);
 
-    // start with a fresh conversation
-    const first = newConversation();
-    setConversations([first]);
-    setActiveId(first.id);
+    const fetchCurrentUser = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/auth/me`, {
+          headers: { Authorization: `Bearer ${t}` },
+        });
+        if (!res.ok) return;
+        const me = await res.json() as { username?: string | null; email?: string | null };
+        const resolvedName = (me.username ?? "").trim();
+        if (resolvedName) {
+          setUserName(resolvedName);
+          return;
+        }
+        const emailForFallback = (me.email ?? resolvedEmail).trim();
+        const localPart = emailForFallback.split("@")[0]?.trim() ?? "";
+        if (localPart) setUserName(localPart);
+      } catch {
+        // ignore; UI will use fallback
+      }
+    };
+
+    const bootstrapHistory = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/chat/langchain`, {
+          headers: { Authorization: `Bearer ${t}` },
+        });
+        if (res.ok) {
+          const data = (await res.json()) as LangchainConversationListResponse | LangchainConversationMeta[];
+          const items = Array.isArray(data)
+            ? data
+            : Array.isArray((data as LangchainConversationListResponse)?.conversations)
+              ? (data as LangchainConversationListResponse).conversations ?? []
+              : [];
+          if (items.length > 0) {
+            const mapped = items.map((item) => {
+              const conversationId = String(
+                item.conversationId ?? item.id ?? item.session_id ?? item.sessionId ?? ""
+              );
+              const fallbackTitle = "Riwayat chat";
+              return {
+                id: conversationId || uid(),
+                apiConversationId: conversationId || undefined,
+                title: fallbackTitle,
+                messages: [],
+                createdAt: item.lastActivity
+                  ? new Date(item.lastActivity)
+                  : item.last_activity
+                    ? new Date(item.last_activity)
+                    : new Date(),
+              } as Conversation;
+            });
+            setConversations(mapped);
+            setActiveId(mapped[0].id);
+            setHistoryReady(true);
+
+            // Update titles from latest human message in langchain_conversation_history (non-blocking)
+            mapped.forEach(async (conv) => {
+              if (!conv.apiConversationId) return;
+              try {
+                const messagesRes = await fetch(
+                  `${API_BASE}/chat/langchain/${encodeURIComponent(conv.apiConversationId)}/messages?limit=50`,
+                  { headers: { Authorization: `Bearer ${t}` } }
+                );
+                if (!messagesRes.ok) return;
+                const messagesData = await messagesRes.json() as LangchainMessagesResponse;
+                const rawMessages = Array.isArray(messagesData?.messages) ? messagesData.messages : [];
+
+                // Cari message human terbaru dari room chat (session_id)
+                const latestHuman = rawMessages
+                  .slice()
+                  .reverse()
+                  .find((m) => {
+                    const tpe = String(m.type ?? m.role ?? "").toLowerCase();
+                    return tpe === "human" || tpe === "user";
+                  });
+
+                const latestQuestion = String(latestHuman?.content ?? "").trim();
+                if (!latestQuestion) return;
+
+                const title = toConversationTitle(latestQuestion, conv.title);
+                setConversations((prev) =>
+                  prev.map((c) =>
+                    c.id !== conv.id ? c : { ...c, title }
+                  )
+                );
+              } catch {
+                // ignore title update failures
+              }
+            });
+            return;
+          }
+        }
+      } catch {
+        // fallback to local storage
+      }
+
+      const storageKey = buildHistoryStorageKey(resolvedEmail);
+      const stored = hydrateHistory(localStorage.getItem(storageKey));
+      if (stored?.conversations.length) {
+        setConversations(stored.conversations);
+        const hasActive = stored.conversations.some((c) => c.id === stored.activeId);
+        setActiveId(hasActive ? stored.activeId : stored.conversations[0].id);
+      } else {
+        // start with a fresh conversation
+        const first = newConversation();
+        setConversations([first]);
+        setActiveId(first.id);
+      }
+      setHistoryReady(true);
+    };
+
+    fetchCurrentUser();
+    bootstrapHistory();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /* ── Persist history locally ── */
+  useEffect(() => {
+    if (!historyReady || !userEmail) return;
+    const storageKey = buildHistoryStorageKey(userEmail);
+    const payload = serializeHistory(conversations, activeId);
+    localStorage.setItem(storageKey, payload);
+  }, [conversations, activeId, historyReady, userEmail]);
 
   /* ── Scroll to bottom when messages change ── */
   useEffect(() => {
@@ -1611,6 +1967,7 @@ export default function ChatPage() {
   }
 
   const activeConv = conversations.find((c) => c.id === activeId);
+  const heroUserName = userName.trim() || userEmail.split("@")[0]?.trim() || "User";
 
   function handleNewChat() {
     const c = newConversation();
@@ -1629,14 +1986,8 @@ export default function ChatPage() {
       );
       if (!res.ok) return; // silently ignore — history is optional
       const raw = await res.json();
-      // API returns an array of { role, content, ... } or a plain string
-      if (!Array.isArray(raw)) return;
-      const historyMessages: Message[] = raw.map((item: Record<string, unknown>) => ({
-        id: uid(),
-        role: (item.type === "human" || item.role === "user") ? "user" : "assistant",
-        content: String(item.content ?? item.text ?? ""),
-        createdAt: item.created_at ? new Date(String(item.created_at)) : new Date(),
-      }));
+      const historyMessages = normalizeHistoryMessages(raw);
+      if (!historyMessages.length) return;
       setConversations((prev) =>
         prev.map((c) =>
           c.id !== conv.id ? c : { ...c, messages: historyMessages }
@@ -1677,8 +2028,8 @@ export default function ChatPage() {
           setToast({ type: "error", message: `Gagal menghapus riwayat: ${reason}` });
           return; // abort local deletion too so user knows it failed
         }
-      } catch (err: any) {
-        setToast({ type: "error", message: err?.message ?? "Gagal menghubungi server." });
+      } catch (err: unknown) {
+        setToast({ type: "error", message: getErrorMessage(err, "Gagal menghubungi server.") });
         return;
       }
     }
@@ -1714,8 +2065,8 @@ export default function ChatPage() {
       const data = await res.json();
       // API returns a string or object — normalise to object
       setCacheStats(typeof data === "string" ? { info: data } : data as Record<string, unknown>);
-    } catch (err: any) {
-      setToast({ type: "error", message: err?.message ?? "Gagal menghubungi server." });
+    } catch (err: unknown) {
+      setToast({ type: "error", message: getErrorMessage(err, "Gagal menghubungi server.") });
     } finally {
       setCacheLoading(false);
     }
@@ -1737,8 +2088,8 @@ export default function ChatPage() {
       }
       setToast({ type: "success", message: "Cache berhasil dibersihkan." });
       setCacheStats(null); // reset stats display
-    } catch (err: any) {
-      setToast({ type: "error", message: err?.message ?? "Gagal menghubungi server." });
+    } catch (err: unknown) {
+      setToast({ type: "error", message: getErrorMessage(err, "Gagal menghubungi server.") });
     } finally {
       setCacheLoading(false);
     }
@@ -1774,8 +2125,8 @@ export default function ChatPage() {
           : [{ info: String(data) }];
       setLcAllConvs(list);
       setLcAllConvsOpen(true);
-    } catch (err: any) {
-      setToast({ type: "error", message: err?.message ?? "Gagal menghubungi server." });
+    } catch (err: unknown) {
+      setToast({ type: "error", message: getErrorMessage(err, "Gagal menghubungi server.") });
     } finally {
       setLcLoading(false);
     }
@@ -1802,8 +2153,8 @@ export default function ChatPage() {
           ? data
           : data as Record<string, unknown>
       );
-    } catch (err: any) {
-      setToast({ type: "error", message: err?.message ?? "Gagal menghubungi server." });
+    } catch (err: unknown) {
+      setToast({ type: "error", message: getErrorMessage(err, "Gagal menghubungi server.") });
     } finally {
       setLcLoading(false);
     }
@@ -1827,8 +2178,8 @@ export default function ChatPage() {
       const data = await res.json();
       const list = Array.isArray(data) ? data as Record<string, unknown>[] : [];
       setLcMessages(list);
-    } catch (err: any) {
-      setToast({ type: "error", message: err?.message ?? "Gagal menghubungi server." });
+    } catch (err: unknown) {
+      setToast({ type: "error", message: getErrorMessage(err, "Gagal menghubungi server.") });
     } finally {
       setLcLoading(false);
     }
@@ -1854,8 +2205,8 @@ export default function ChatPage() {
       setToast({ type: "success", message: "Memori LangChain berhasil dihapus." });
       setLcSummary(null);
       setLcMessages(null);
-    } catch (err: any) {
-      setToast({ type: "error", message: err?.message ?? "Gagal menghubungi server." });
+    } catch (err: unknown) {
+      setToast({ type: "error", message: getErrorMessage(err, "Gagal menghubungi server.") });
     } finally {
       setLcLoading(false);
     }
@@ -1893,8 +2244,8 @@ export default function ChatPage() {
       setLcMessages(null);
       // Clear all local apiConversationIds since LC memory is gone
       setConversations(prev => prev.map(c => ({ ...c, apiConversationId: undefined })));
-    } catch (err: any) {
-      setToast({ type: "error", message: err?.message ?? "Gagal menghubungi server." });
+    } catch (err: unknown) {
+      setToast({ type: "error", message: getErrorMessage(err, "Gagal menghubungi server.") });
     } finally {
       setLcLoading(false);
     }
@@ -1921,8 +2272,12 @@ export default function ChatPage() {
       const fresh = newConversation();
       setConversations([fresh]);
       setActiveId(fresh.id);
-    } catch (err: any) {
-      setToast({ type: "error", message: err?.message ?? "Gagal menghubungi server." });
+      if (userEmail) {
+        const storageKey = buildHistoryStorageKey(userEmail);
+        localStorage.removeItem(storageKey);
+      }
+    } catch (err: unknown) {
+      setToast({ type: "error", message: getErrorMessage(err, "Gagal menghubungi server.") });
     } finally {
       setLcLoading(false);
     }
@@ -1957,8 +2312,8 @@ export default function ChatPage() {
       setDeleteBeforeModal(false);
       setDeleteBeforeConvId("");
       setDeleteBeforeTs("");
-    } catch (err: any) {
-      setToast({ type: "error", message: err?.message ?? "Gagal menghubungi server." });
+    } catch (err: unknown) {
+      setToast({ type: "error", message: getErrorMessage(err, "Gagal menghubungi server.") });
     } finally {
       setDeleteBeforeLoading(false);
     }
@@ -2051,6 +2406,10 @@ export default function ChatPage() {
             if (chunk.type === "data") {
               const payload = chunk.data as ChatApiResponse | undefined;
               const answer = payload?.answer ?? (chunk.answer as string | undefined) ?? "";
+              const parsedClarification = normalizeClarification(
+                payload?.clarification ?? payload?.clarification_data ?? payload?.description_clarification_section,
+                payload?.suggestions
+              );
               accumulated = answer;
               setConversations((prev) =>
                 prev.map((c) => {
@@ -2066,13 +2425,13 @@ export default function ChatPage() {
                         suggestions: payload?.suggestions ?? [],
                         chart: payload?.chart ?? null,
                         data: payload?.data ?? null,
-                        clarification: payload?.clarification ?? null,
+                        clarification: parsedClarification,
                       }
                     ),
                   };
                 })
               );
-              if (payload?.clarification) setActiveClarification(payload.clarification);
+              if (parsedClarification) setActiveClarification(parsedClarification);
             } else if (chunk.type === "progress") {
               // show progress stage as interim content
               const stage = String(chunk.stage ?? chunk.message ?? "");
@@ -2167,9 +2526,10 @@ export default function ChatPage() {
           if (Array.isArray(detail)) {
             // Tampilkan SEMUA info error dari FastAPI agar mudah debug
             reason = detail
-              .map((d: any) => {
+              .map((item: unknown) => {
+                const d = item as ApiErrorDetail;
                 const loc = Array.isArray(d.loc) ? d.loc.join(" → ") : String(d.loc ?? "");
-                return `[${loc}] ${d.msg} (type: ${d.type ?? "-"})`;
+                return `[${loc}] ${d.msg ?? ""} (type: ${d.type ?? "-"})`;
               })
               .join("\n");
           } else if (typeof detail === "string") {
@@ -2201,6 +2561,10 @@ export default function ChatPage() {
       // ── Success 200 — parse JSON response ──
       const data: ChatApiResponse = await res.json();
       console.log("✅ Response dari backend:", JSON.stringify(data, null, 2));
+      const parsedClarification = normalizeClarification(
+        data.clarification ?? data.clarification_data ?? data.description_clarification_section,
+        data.suggestions
+      );
 
       setConversations((prev) =>
         prev.map((c) => {
@@ -2217,18 +2581,19 @@ export default function ChatPage() {
                 suggestions: data.suggestions ?? [],
                 chart: data.chart ?? null,
                 data: data.data ?? null,
-                clarification: data.clarification ?? null,
+                clarification: parsedClarification,
               }
             ),
           };
         })
       );
-      if (data.clarification) setActiveClarification(data.clarification);
+      if (parsedClarification) setActiveClarification(parsedClarification);
 
-    } catch (err: any) {
-      const msg = err?.message === "Failed to fetch"
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : "";
+      const msg = errMsg === "Failed to fetch"
         ? "Tidak dapat menghubungi server. Pastikan backend berjalan di port 8001."
-        : (err?.message ?? "Terjadi kesalahan jaringan.");
+        : (errMsg || "Terjadi kesalahan jaringan.");
       setConversations((prev) =>
         prev.map((c) =>
           c.id !== activeId ? c : {
@@ -2253,8 +2618,10 @@ export default function ChatPage() {
   }
 
   /* ─────────────────────────── Render ─────────────────────────── */
+  const hasMessages = (activeConv?.messages.length ?? 0) > 0;
+
   return (
-    <div style={{ display: "flex", height: "100vh", width: "100vw", overflow: "hidden", fontFamily: "Poppins, sans-serif", background: "#fafbfc" }}>
+    <div style={{ display: "flex", height: "100vh", width: "100vw", overflow: "hidden", fontFamily: "'Inter', Tahoma, Geneva, Verdana, sans-serif", background: "#1a1a1a" }}>
 
       {/* Toast */}
       {toast && <Toast {...toast} onClose={() => setToast(null)} />}
@@ -2316,7 +2683,7 @@ export default function ChatPage() {
               {/* Modal body */}
               <div style={{ overflowY: "auto", padding: "14px 20px", display: "flex", flexDirection: "column", gap: 8 }}>
                 {!lcAllConvs || lcAllConvs.length === 0 ? (
-                  <p style={{ color: "#888", textAlign: "center", margin: "20px 0", fontSize: "0.875rem" }}>
+                  <p style={{ color: "#8f8f8a", textAlign: "center", margin: "20px 0", fontSize: "0.875rem" }}>
                     Tidak ada percakapan ditemukan.
                   </p>
                 ) : (
@@ -2339,7 +2706,7 @@ export default function ChatPage() {
                             wordBreak: "break-all",
                           }}>{convId}</p>
                           {msgCount !== null && (
-                            <p style={{ margin: "2px 0 0", color: "#888", fontSize: "0.72rem" }}>
+                            <p style={{ margin: "2px 0 0", color: "#8f8f8a", fontSize: "0.72rem" }}>
                               {String(msgCount)} pesan
                             </p>
                           )}
@@ -2524,7 +2891,7 @@ export default function ChatPage() {
               <h2 style={{ margin: "0 0 6px", color: "#fff", fontSize: "1rem", fontWeight: 700 }}>
                 🗓 Hapus Riwayat Sebelum Timestamp
               </h2>
-              <p style={{ margin: "0 0 18px", color: "#888", fontSize: "0.82rem", lineHeight: 1.5 }}>
+              <p style={{ margin: "0 0 18px", color: "#8f8f8a", fontSize: "0.82rem", lineHeight: 1.5 }}>
                 Menghapus pesan LangChain + AuditLog sebelum waktu yang ditentukan untuk satu percakapan.
               </p>
               <label style={{ display: "block", marginBottom: 14 }}>
@@ -2542,7 +2909,7 @@ export default function ChatPage() {
               </label>
               <label style={{ display: "block", marginBottom: 20 }}>
                 <span style={{ color: "#c0c0c0", fontSize: "0.8rem", display: "block", marginBottom: 5 }}>
-                  Timestamp <span style={{ color: "#888" }}>(ISO format, e.g. 2025-02-24T10:30:00)</span>
+                  Timestamp <span style={{ color: "#8f8f8a" }}>(ISO format, e.g. 2025-02-24T10:30:00)</span>
                 </span>
                 <input
                   type="datetime-local"
@@ -2583,14 +2950,112 @@ export default function ChatPage() {
         )}
 
         {/* Messages */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "28px 32px", display: "flex", flexDirection: "column", gap: 20, background: "linear-gradient(180deg, #fafbfc 0%, #f0f4f8 100%)" }}>
-          {activeConv?.messages.length === 0 && (
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "#999", gap: 18, marginTop: "8vh" }}>
-              <div style={{ fontSize: "4rem", opacity: 0.7 }}>🚀</div>
-              <p style={{ fontSize: "1.15rem", fontWeight: 700, color: "#1a1a2e", margin: 0 }}>Mulai Percakapan Anda</p>
-              <p style={{ fontSize: "0.9rem", color: "#666", margin: 0, textAlign: "center", maxWidth: "300px", lineHeight: 1.6 }}>
-                Tanyakan apa pun kepada AI assistant kami untuk mendapatkan informasi dan insights yang Anda butuhkan.
-              </p>
+        <div style={{ flex: 1, overflowY: "auto", padding: "28px 32px", display: "flex", flexDirection: "column", gap: 20, background: "linear-gradient(180deg, #1f1f1f 0%, #1a1a1a 100%)" }}>
+          {!hasMessages && (
+            <div
+              style={{
+                flex: 1,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#e5e1d8",
+                gap: 18,
+                padding: "24px",
+              }}
+            >
+              <div
+                style={{
+                  width: 72,
+                  height: 72,
+                  borderRadius: 20,
+                  background: "#252525",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  boxShadow: "0 10px 22px rgba(0, 0, 0, 0.35)",
+                  border: "1px solid #323232",
+                }}
+              >
+                <img
+                  src="/logo.png"
+                  alt="Telkomsel"
+                  style={{ width: 42, height: 42, objectFit: "contain" }}
+                />
+              </div>
+              <div style={{ textAlign: "center" }}>
+                <p style={{ fontSize: "1.25rem", fontWeight: 700, color: "#e9e4d9", margin: 0 }}>
+                  {`Selamat ${sessionGreeting}, ${heroUserName}`}
+                </p>
+                <p style={{ fontSize: "0.95rem", color: "#a59f95", margin: "6px 0 0" }}>
+                  Informasi apa yang Anda inginkan saat ini?
+                </p>
+              </div>
+              <form
+                onSubmit={(e: FormEvent) => { e.preventDefault(); sendMessage(); }}
+                style={{
+                  width: "min(520px, 90%)",
+                  background: "#2a2a2a",
+                  borderRadius: 16,
+                  border: "1px solid #3a3a3a",
+                  padding: "14px 16px",
+                  boxShadow: "0 14px 26px rgba(0, 0, 0, 0.3)",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 12,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <textarea
+                    ref={textareaRef}
+                    rows={1}
+                    value={input}
+                    onChange={e => setInput(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder="A whole new way to work."
+                    disabled={streaming}
+                    style={{
+                      flex: 1,
+                      resize: "none",
+                      border: "none",
+                      background: "transparent",
+                      outline: "none",
+                      fontSize: "0.95rem",
+                      lineHeight: 1.6,
+                      color: "#e2ddd2",
+                      fontFamily: "inherit",
+                      maxHeight: 160,
+                      overflowY: "auto",
+                      opacity: streaming ? 0.6 : 1,
+                      transition: "opacity .2s",
+                    }}
+                  />
+                  <button
+                    type="submit"
+                    disabled={!input.trim() || streaming}
+                    style={{
+                      flexShrink: 0,
+                      width: 34,
+                      height: 34,
+                      borderRadius: 10,
+                      background: input.trim() && !streaming
+                        ? "linear-gradient(135deg, #c97342, #b76231)"
+                        : "rgba(255,255,255,0.08)",
+                      border: "none",
+                      cursor: input.trim() && !streaming ? "pointer" : "default",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      transition: "all .2s ease",
+                      color: input.trim() && !streaming ? "#fff" : "#8f8f8a",
+                      fontSize: "0.95rem",
+                    }}
+                  >
+                    {streaming ? <RadioButtonCheckedIcon sx={{ fontSize: 16 }} /> : "➤"}
+                  </button>
+                </div>
+                <div />
+              </form>
             </div>
           )}
 
@@ -2623,17 +3088,17 @@ export default function ChatPage() {
                   padding: msg.role === "user" ? "12px 18px" : "14px 18px",
                   borderRadius: msg.role === "user" ? "20px 20px 4px 20px" : "20px 20px 20px 4px",
                   background: msg.role === "user"
-                    ? "linear-gradient(135deg, #FE6C11 0%, #FF4400 100%)"
-                    : "#ffffff",
-                  color: msg.role === "user" ? "#fff" : "#1a1a2e",
+                    ? "linear-gradient(135deg, #c97342 0%, #b76231 100%)"
+                    : "#2a2a2a",
+                  color: msg.role === "user" ? "#fff" : "#dfdbd1",
                   fontSize: "0.95rem",
                   lineHeight: 1.7,
                   boxShadow: msg.role === "user" 
                     ? "0 4px 12px rgba(254, 108, 17, 0.25)" 
-                    : "0 2px 8px rgba(0, 0, 0, 0.06)",
+                    : "0 2px 10px rgba(0, 0, 0, 0.35)",
                   whiteSpace: msg.role === "user" ? "pre-wrap" : "normal",
                   wordBreak: "break-word",
-                  border: msg.role === "user" ? "none" : "1px solid rgba(0,0,0,0.05)",
+                  border: msg.role === "user" ? "none" : "1px solid #343434",
                 }}>
                   {msg.content === "" && msg.role === "assistant" ? (
                     /* Typing indicator */
@@ -2641,7 +3106,7 @@ export default function ChatPage() {
                       {[0, 1, 2].map(i => (
                         <span key={i} style={{
                           width: 8, height: 8, borderRadius: "50%",
-                          background: "#FE6C11",
+                          background: "#c97342",
                           animation: `bounce .8s ease-in-out ${i * .12}s infinite`,
                           display: "inline-block",
                         }} />
@@ -2678,9 +3143,9 @@ export default function ChatPage() {
                         style={{
                           padding: "6px 12px",
                           borderRadius: 20,
-                          border: "1.5px solid #FE6C11",
-                          background: "#fff8f5",
-                          color: "#FE6C11",
+                          border: "1.5px solid #5a4a3f",
+                          background: "#2a2a2a",
+                          color: "#d9d2c4",
                           fontSize: "0.78rem",
                           fontWeight: 500,
                           cursor: "pointer",
@@ -2689,12 +3154,12 @@ export default function ChatPage() {
                           opacity: streaming ? 0.5 : 1,
                         }}
                         onMouseEnter={e => {
-                          (e.currentTarget as HTMLButtonElement).style.background = "#FE6C11";
-                          (e.currentTarget as HTMLButtonElement).style.color = "#fff";
+                          (e.currentTarget as HTMLButtonElement).style.background = "#3a332d";
+                          (e.currentTarget as HTMLButtonElement).style.color = "#f4efe5";
                         }}
                         onMouseLeave={e => {
-                          (e.currentTarget as HTMLButtonElement).style.background = "#fff8f5";
-                          (e.currentTarget as HTMLButtonElement).style.color = "#FE6C11";
+                          (e.currentTarget as HTMLButtonElement).style.background = "#2a2a2a";
+                          (e.currentTarget as HTMLButtonElement).style.color = "#d9d2c4";
                         }}
                       >
                         {s}
@@ -2724,94 +3189,96 @@ export default function ChatPage() {
         )}
 
         {/* Input area */}
-        <div style={{
-          padding: "16px 32px 24px",
-          background: "linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0.8) 100%)",
-          borderTop: "1px solid rgba(254,108,17,0.1)",
-          flexShrink: 0,
-          backdropFilter: "blur(8px)",
-        }}>
-          <form
-            onSubmit={(e: FormEvent) => { e.preventDefault(); sendMessage(); }}
-            style={{
-              display: "flex", alignItems: "flex-end", gap: 12,
-              background: "linear-gradient(135deg, #ffffff 0%, #fafbfc 100%)",
-              borderRadius: 18,
-              padding: "12px 12px 12px 18px",
-              border: "1.5px solid rgba(254,108,17,0.2)",
-              transition: "all .2s ease",
-              boxShadow: "0 4px 16px rgba(254, 108, 17, 0.08)",
-            }}
-            onFocus={() => {}}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLFormElement).style.borderColor = "rgba(254,108,17,0.4)";
-              (e.currentTarget as HTMLFormElement).style.boxShadow = "0 6px 20px rgba(254, 108, 17, 0.12)";
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLFormElement).style.borderColor = "rgba(254,108,17,0.2)";
-              (e.currentTarget as HTMLFormElement).style.boxShadow = "0 4px 16px rgba(254, 108, 17, 0.08)";
-            }}
-          >
-            <textarea
-              ref={textareaRef}
-              rows={1}
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Ketik pesan… (Enter kirim, Shift+Enter baris baru)"
-              disabled={streaming}
+        {hasMessages && (
+          <div style={{
+            padding: "16px 32px 24px",
+            background: "linear-gradient(180deg, rgba(26,26,26,0.75) 0%, rgba(26,26,26,0.95) 100%)",
+            borderTop: "1px solid #2f2f2f",
+            flexShrink: 0,
+            backdropFilter: "blur(8px)",
+          }}>
+            <form
+              onSubmit={(e: FormEvent) => { e.preventDefault(); sendMessage(); }}
               style={{
-                flex: 1,
-                resize: "none",
-                border: "none",
-                background: "transparent",
-                outline: "none",
-                fontSize: "0.95rem",
-                lineHeight: 1.6,
-                color: "#1a1a2e",
-                fontFamily: "inherit",
-                maxHeight: 160,
-                overflowY: "auto",
-                opacity: streaming ? 0.6 : 1,
-                transition: "opacity .2s",
-              }}
-            />
-            <button
-              type="submit"
-              disabled={!input.trim() || streaming}
-              style={{
-                flexShrink: 0,
-                width: 44, height: 44,
-                borderRadius: 14,
-                background: input.trim() && !streaming
-                  ? "linear-gradient(135deg, #FE6C11 0%, #FF4400 100%)"
-                  : "rgba(0,0,0,0.08)",
-                border: "none",
-                cursor: input.trim() && !streaming ? "pointer" : "default",
-                display: "flex", alignItems: "center", justifyContent: "center",
+                display: "flex", alignItems: "flex-end", gap: 12,
+                background: "linear-gradient(135deg, #2a2a2a 0%, #242424 100%)",
+                borderRadius: 18,
+                padding: "12px 12px 12px 18px",
+                border: "1.5px solid #3a3a3a",
                 transition: "all .2s ease",
-                color: input.trim() && !streaming ? "#fff" : "#bbb",
-                fontSize: "1.2rem",
-                boxShadow: input.trim() && !streaming ? "0 4px 12px rgba(254, 108, 17, 0.3)" : "none",
+                boxShadow: "0 6px 20px rgba(0, 0, 0, 0.3)",
               }}
+              onFocus={() => {}}
               onMouseEnter={(e) => {
-                if (input.trim() && !streaming) {
-                  (e.currentTarget as HTMLButtonElement).style.transform = "translateY(-2px)";
-                  (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 6px 16px rgba(254, 108, 17, 0.4)";
-                }
+                (e.currentTarget as HTMLFormElement).style.borderColor = "#4a4a4a";
+                (e.currentTarget as HTMLFormElement).style.boxShadow = "0 10px 24px rgba(0, 0, 0, 0.4)";
               }}
               onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.transform = "translateY(0)";
-                (e.currentTarget as HTMLButtonElement).style.boxShadow = input.trim() && !streaming ? "0 4px 12px rgba(254, 108, 17, 0.3)" : "none";
+                (e.currentTarget as HTMLFormElement).style.borderColor = "#3a3a3a";
+                (e.currentTarget as HTMLFormElement).style.boxShadow = "0 6px 20px rgba(0, 0, 0, 0.3)";
               }}
             >
-              {streaming ? "⏳" : "➤"}
-            </button>
-          </form>
-          <p style={{ fontSize: "0.75rem", color: "#9ca3af", textAlign: "center", margin: "10px 0 0", fontStyle: "italic" }}>
-            💡 AI dapat membuat kesalahan. Verifikasi informasi penting sebelum menggunakan.
-          </p>
-        </div>
+              <textarea
+                ref={textareaRef}
+                rows={1}
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Ketik pesan… (Enter kirim, Shift+Enter baris baru)"
+                disabled={streaming}
+                style={{
+                  flex: 1,
+                  resize: "none",
+                  border: "none",
+                  background: "transparent",
+                  outline: "none",
+                  fontSize: "0.95rem",
+                  lineHeight: 1.6,
+                  color: "#e2ddd2",
+                  fontFamily: "inherit",
+                  maxHeight: 160,
+                  overflowY: "auto",
+                  opacity: streaming ? 0.6 : 1,
+                  transition: "opacity .2s",
+                }}
+              />
+              <button
+                type="submit"
+                disabled={!input.trim() || streaming}
+                style={{
+                  flexShrink: 0,
+                  width: 44, height: 44,
+                  borderRadius: 14,
+                  background: input.trim() && !streaming
+                    ? "linear-gradient(135deg, #c97342 0%, #b76231 100%)"
+                    : "rgba(255,255,255,0.08)",
+                  border: "none",
+                  cursor: input.trim() && !streaming ? "pointer" : "default",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  transition: "all .2s ease",
+                  color: input.trim() && !streaming ? "#fff" : "#8f8f8a",
+                  fontSize: "1.2rem",
+                  boxShadow: input.trim() && !streaming ? "0 4px 12px rgba(201, 115, 66, 0.35)" : "none",
+                }}
+                onMouseEnter={(e) => {
+                  if (input.trim() && !streaming) {
+                    (e.currentTarget as HTMLButtonElement).style.transform = "translateY(-2px)";
+                    (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 8px 18px rgba(201, 115, 66, 0.45)";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.transform = "translateY(0)";
+                  (e.currentTarget as HTMLButtonElement).style.boxShadow = input.trim() && !streaming ? "0 4px 12px rgba(201, 115, 66, 0.35)" : "none";
+                }}
+              >
+                {streaming ? <RadioButtonCheckedIcon sx={{ fontSize: 16 }} /> : "➤"}
+              </button>
+            </form>
+            <p style={{ fontSize: "0.75rem", color: "#8f8f8a", textAlign: "center", margin: "10px 0 0", fontStyle: "italic" }}>
+              💡 AI dapat membuat kesalahan. Verifikasi informasi penting sebelum menggunakan.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

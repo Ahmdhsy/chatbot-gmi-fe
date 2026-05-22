@@ -14,14 +14,14 @@ export default function Header({
       style={{
         display: "flex",
         alignItems: "center",
-        padding: "16px 24px",
-        background: "#ffffff",
-        borderBottom: "1px solid rgba(254,108,17,0.1)",
+        padding: "14px 24px",
+        background: "linear-gradient(180deg, #1f1f1f 0%, #1b1b1b 100%)",
+        borderBottom: "1px solid #2f2f2f",
         flexShrink: 0,
-        boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+        boxShadow: "0 2px 10px rgba(0,0,0,0.28)",
       }}
     >
-      <h1 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 600, color: "#1a1a2e" }}>
+      <h1 style={{ margin: 0, fontSize: "1.02rem", fontWeight: 600, color: "#e6e1d6", letterSpacing: "0.01em" }}>
         {conversationTitle}
       </h1>
     </header>
