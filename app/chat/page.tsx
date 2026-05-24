@@ -8,6 +8,7 @@ import React, {
   FormEvent,
   KeyboardEvent,
 } from "react";
+import { getAccessTokenFromCookie, clearAccessTokenCookie, getRoleFromCookie } from "../lib/auth";
 import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
@@ -1312,10 +1313,7 @@ function normalizeInsightLists(content: string) {
   return normalized;
 }
 
-function normalizeClarification(
-  raw: unknown,
-  fallbackSuggestions?: string[]
-): ClarificationData | null {
+function normalizeClarification(raw: unknown): ClarificationData | null {
   if (raw && typeof raw === "object") {
     const obj = raw as Record<string, unknown>;
     const stepsRaw = Array.isArray(obj.steps) ? obj.steps : [];
@@ -1344,23 +1342,6 @@ function normalizeClarification(
     if (message && normalizedSteps.length > 0) {
       return { message, steps: normalizedSteps };
     }
-  }
-
-  if (Array.isArray(fallbackSuggestions) && fallbackSuggestions.length > 0) {
-    return {
-      message: "Silakan pilih pertanyaan lanjutan yang ingin Anda tanyakan:",
-      steps: [
-        {
-          id: "followup",
-          question: "Pilih pertanyaan:",
-          options: fallbackSuggestions.map((s, idx) => ({
-            value: `suggestion_${idx + 1}`,
-            label: s,
-            description: null,
-          })),
-        },
-      ],
-    };
   }
 
   return null;
@@ -1764,6 +1745,7 @@ export default function ChatPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [historyReady, setHistoryReady] = useState(false);
+  const [authReady, setAuthReady] = useState(false);
 
   /* ── Cache panel state ── */
   const [cacheStats, setCacheStats] = useState<Record<string, unknown> | null>(null);
@@ -1803,23 +1785,9 @@ export default function ChatPage() {
 
   /* ── Auth guard ── */
   useEffect(() => {
-    const t = localStorage.getItem("access_token") ?? "";
-    if (!t) {
-      router.replace("/signin");
-      return;
-    }
-    setToken(t);
-    // decode email from JWT payload (base64)
-    let resolvedEmail = "User";
-    try {
-      const payload = JSON.parse(atob(t.split(".")[1]));
-      resolvedEmail = payload?.sub ?? payload?.email ?? "User";
-    } catch {
-      resolvedEmail = "User";
-    }
-    setUserEmail(resolvedEmail);
+    let cancelled = false;
 
-    const fetchCurrentUser = async () => {
+    const fetchCurrentUser = async (t: string, resolvedEmail: string) => {
       try {
         const res = await fetch(`${API_BASE}/auth/me`, {
           headers: { Authorization: `Bearer ${t}` },
@@ -1839,7 +1807,7 @@ export default function ChatPage() {
       }
     };
 
-    const bootstrapHistory = async () => {
+    const bootstrapHistory = async (t: string, resolvedEmail: string) => {
       try {
         const res = await fetch(`${API_BASE}/chat/langchain`, {
           headers: { Authorization: `Bearer ${t}` },
@@ -1929,8 +1897,51 @@ export default function ChatPage() {
       setHistoryReady(true);
     };
 
-    fetchCurrentUser();
-    bootstrapHistory();
+    const initAuth = async () => {
+      // Retry a few times to avoid redirect race right after login.
+      let tokenFromCookie = "";
+      for (let i = 0; i < 40; i++) {
+        tokenFromCookie = getAccessTokenFromCookie() ?? "";
+        if (tokenFromCookie) break;
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
+
+      if (!tokenFromCookie) {
+        if (!cancelled) {
+          setAuthReady(true);
+          setHistoryReady(true);
+          const first = newConversation();
+          setConversations([first]);
+          setActiveId(first.id);
+          setToast({ type: "error", message: "Sesi belum terbaca dari cookie. Silakan login ulang." });
+        }
+        return;
+      }
+
+      if (cancelled) return;
+      setToken(tokenFromCookie);
+
+      // decode email from JWT payload (base64)
+      let resolvedEmail = "User";
+      try {
+        const payload = JSON.parse(atob(tokenFromCookie.split(".")[1]));
+        resolvedEmail = payload?.sub ?? payload?.email ?? "User";
+      } catch {
+        resolvedEmail = "User";
+      }
+      if (cancelled) return;
+      setUserEmail(resolvedEmail);
+
+      fetchCurrentUser(tokenFromCookie, resolvedEmail);
+      bootstrapHistory(tokenFromCookie, resolvedEmail);
+      setAuthReady(true);
+    };
+
+    initAuth();
+
+    return () => {
+      cancelled = true;
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -2332,7 +2343,8 @@ export default function ChatPage() {
   }
 
   function handleLogout() {
-    localStorage.removeItem("access_token");
+    // Clear access token cookie and redirect to signin
+    clearAccessTokenCookie();
     router.push("/signin");
   }
 
@@ -2393,6 +2405,7 @@ export default function ChatPage() {
           message: text,
           useLangChainMemory: "true",
           includeChartSpec: "true",
+          token: token, // Include token for EventSource authentication
         });
         if (currentApiConvId) params.set("conversationId", currentApiConvId);
         const url = `${API_BASE}/chat/stream?${params.toString()}`;
@@ -2407,8 +2420,7 @@ export default function ChatPage() {
               const payload = chunk.data as ChatApiResponse | undefined;
               const answer = payload?.answer ?? (chunk.answer as string | undefined) ?? "";
               const parsedClarification = normalizeClarification(
-                payload?.clarification ?? payload?.clarification_data ?? payload?.description_clarification_section,
-                payload?.suggestions
+                payload?.clarification ?? payload?.clarification_data ?? payload?.description_clarification_section
               );
               accumulated = answer;
               setConversations((prev) =>
@@ -2562,8 +2574,7 @@ export default function ChatPage() {
       const data: ChatApiResponse = await res.json();
       console.log("✅ Response dari backend:", JSON.stringify(data, null, 2));
       const parsedClarification = normalizeClarification(
-        data.clarification ?? data.clarification_data ?? data.description_clarification_section,
-        data.suggestions
+        data.clarification ?? data.clarification_data ?? data.description_clarification_section
       );
 
       setConversations((prev) =>
@@ -2619,6 +2630,24 @@ export default function ChatPage() {
 
   /* ─────────────────────────── Render ─────────────────────────── */
   const hasMessages = (activeConv?.messages.length ?? 0) > 0;
+  if (!authReady) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          height: "100vh",
+          width: "100vw",
+          background: "#1a1a1a",
+          color: "#d8d2c4",
+          fontFamily: "'Inter', Tahoma, Geneva, Verdana, sans-serif",
+        }}
+      >
+        Memuat sesi...
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: "flex", height: "100vh", width: "100vw", overflow: "hidden", fontFamily: "'Inter', Tahoma, Geneva, Verdana, sans-serif", background: "#1a1a1a" }}>

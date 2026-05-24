@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
+import { getAccessTokenFromCookie, setAccessTokenCookie, setRoleCookie, setUserIdCookie } from '../lib/auth';
 
 /* ─── Mini Toast component ─── */
 type ToastType = 'success' | 'error';
@@ -71,9 +72,26 @@ export default function SignIn() {
       if (res.ok) {
         const data = await res.json();
         const token: string = data?.access_token ?? '';
-        if (token) localStorage.setItem('access_token', token);
+        const role: string = data?.role ?? 'user';
+        const userId: string = data?.user_id ?? '';
+        
+        if (!token) {
+          showToast('error', 'Login berhasil tetapi token tidak ditemukan di response.');
+          return;
+        }
+
+        // Store token, role, and user_id in cookies (client-side). For HttpOnly prefer backend-set cookie.
+        setAccessTokenCookie(token, 7);
+        setRoleCookie(role, 7);
+        setUserIdCookie(userId, 7);
+
+        // Verify cookie persistence before redirecting.
+        const persistedToken = getAccessTokenFromCookie();
+        if (!persistedToken) {
+          showToast('success', 'Login berhasil, memproses sesi...');
+        }
         showToast('success', 'Login berhasil! Mengarahkan ke halaman chatbot...');
-        setTimeout(() => router.push('/chat'), 1200);
+        setTimeout(() => router.replace('/chat'), 1200);
         return;
       }
 
