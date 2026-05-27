@@ -78,3 +78,39 @@ html, body {
   position: relative; /* above overlay */
   z-index: 10;
 }
+
+/* Signin input behavior: keep dark theme on hover/focus/autofill */
+.signin-auth-input {
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+}
+
+.signin-auth-input:hover {
+  border-color: #5c534a !important;
+  background: #2f2b28 !important;
+}
+
+.signin-auth-input:focus {
+  border-color: #c97342 !important;
+  background: #2d2a27 !important;
+  box-shadow: 0 0 0 3px rgba(201, 115, 66, 0.18);
+}
+
+.signin-auth-input:-webkit-autofill,
+.signin-auth-input:-webkit-autofill:hover,
+.signin-auth-input:-webkit-autofill:focus,
+.signin-auth-input:-webkit-autofill:active {
+  -webkit-text-fill-color: #e7e1d5 !important;
+  caret-color: #e7e1d5 !important;
+  transition: background-color 9999s ease-out 0s;
+  -webkit-box-shadow: 0 0 0 1000px #2d2a27 inset !important;
+  box-shadow: 0 0 0 1000px #2d2a27 inset !important;
+  border-color: #5c534a !important;
+}
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 30px #2d2a27 inset !important;
+  -webkit-text-fill-color: #e7e1d5 !important;
+  caret-color: #e7e1d5;
+}

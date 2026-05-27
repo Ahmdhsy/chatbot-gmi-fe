@@ -287,7 +287,7 @@ export default function Sidebar({
                   onMouseEnter={(e) => {
                     const lineEl = (e.currentTarget as HTMLDivElement).querySelector('[data-line]') as HTMLDivElement;
                     if (lineEl && c.id !== activeId) {
-                      lineEl.style.borderLeftColor = "#c97342";
+                      lineEl.style.borderLeftColor = "#c40000ff";
                       lineEl.style.borderLeftWidth = "3px";
                       lineEl.style.marginLeft = "-1px";
                     }
@@ -309,7 +309,7 @@ export default function Sidebar({
                       left: 10,
                       top: 0,
                       bottom: 0,
-                      borderLeft: `${c.id === activeId ? 3 : 1}px solid ${c.id === activeId ? "#c97342" : "transparent"}`,
+                      borderLeft: `${c.id === activeId ? 3 : 1}px solid ${c.id === activeId ? "#c40000ff" : "transparent"}`,
                       width: 0,
                       transition: "all .2s ease",
                       zIndex: 2,
@@ -398,7 +398,7 @@ export default function Sidebar({
                 width: 46,
                 height: 46,
                 borderRadius: "50%",
-                background: "#ff5a00",
+                background: 'linear-gradient(135deg, #C8102E 0%, #8B0000 100%)',
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -437,9 +437,9 @@ export default function Sidebar({
                 width: 34,
                 height: 34,
                 borderRadius: 10,
-                background: "rgba(201,115,66,0.12)",
-                color: "#d98b5d",
-                border: "1px solid rgba(201,115,66,0.35)",
+                background: "rgba(70, 70, 70, 0.12)",
+                color: "#ffffffff",
+                border: "1px solid rgba(140, 133, 129, 0.35)",
                 cursor: "pointer",
                 transition: "all .2s ease",
                 display: "inline-flex",
@@ -447,12 +447,12 @@ export default function Sidebar({
                 justifyContent: "center",
               }}
               onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background = "rgba(201,115,66,0.2)";
-                (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(201,115,66,0.45)";
+                (e.currentTarget as HTMLButtonElement).style.background = "linear-gradient(135deg, #C8102E 0%, #8B0000 100%)";
+                (e.currentTarget as HTMLButtonElement).style.borderColor = "linear-gradient(135deg, #C8102E 0%, #8B0000 100%)";
               }}
               onMouseLeave={(e) => {
                 (e.currentTarget as HTMLButtonElement).style.background = "rgba(201,115,66,0.12)";
-                (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(201,115,66,0.35)";
+                (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(137, 135, 133, 0.35)";
               }}
               title="Keluar"
             >

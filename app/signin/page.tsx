@@ -164,7 +164,7 @@ export default function SignIn() {
               objectFit: 'contain',
               objectPosition: 'left center',
               opacity: 0.9,
-              filter: 'grayscale(1) brightness(2.2) contrast(0.85)',
+              filter: 'brightness(1.2) contrast(1.95)',
             }}
             priority
           />
@@ -186,7 +186,7 @@ export default function SignIn() {
               width: '70%',
               height: 'auto',
               opacity: 0.32,
-              filter: 'grayscale(1) brightness(0.95)',
+              filter: 'grayscale(1) brightness(1.50)',
               display: 'block',
             }}
             aria-hidden="true"
@@ -231,7 +231,7 @@ export default function SignIn() {
           </h2>
           <div
             className="mx-auto mb-10"
-            style={{ width: '40px', height: '3px', background: '#c97342', borderRadius: '99px' }}
+            style={{ width: '40px', height: '3px', background: '#EC2028', borderRadius: '99px' }}
           />
 
           <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -290,7 +290,7 @@ export default function SignIn() {
                   borderRadius: '12px',
                   padding: '12px 40px 12px 14px',
                   fontSize: '0.875rem',
-                  color: '#e7e1d5',
+                  color: 'white', 
                   background: '#2d2a27',
                   outline: 'none',
                   boxSizing: 'border-box',
@@ -331,7 +331,7 @@ export default function SignIn() {
                   width: '100%',
                   padding: '14px',
                   borderRadius: '12px',
-                  background: 'linear-gradient(135deg, #cf7d48 0%, #b56534 100%)',
+                  background: 'linear-gradient(135deg, #C8102E 0%, #8B0000 100%)',
                   color: '#ffffff',
                   fontWeight: '600',
                   fontSize: '1rem',
@@ -348,14 +348,6 @@ export default function SignIn() {
               </button>
             </div>
           </form>
-
-          <p
-            className="text-center text-sm mt-6"
-            style={{ color: '#a7a39a' }}
-          >
-            Already have an account?{' '}
-            <span style={{ color: '#d98b5d', fontWeight: 600 }}>Please Chat Your Admin.</span>
-          </p>
         </div>
       </main>
 
