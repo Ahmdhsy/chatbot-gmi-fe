@@ -169,15 +169,15 @@ function ClarificationPanel({
 
     if (currentStep < totalSteps - 1) {
       setCurrentStep((s) => s + 1);
-    } else {
-      // Last step — build follow-up and submit
-      const parts = clarification.steps.map((s, idx) => {
-        const sel = idx === currentStep ? value : newSelections[s.id];
-        const opt = s.options.find((o) => o.value === sel);
-        return opt ? `${opt.label} (${opt.value})` : sel ?? "";
-      });
-      onSubmit(`Pilihan saya: ${parts.filter(Boolean).join(", ")}`);
+      return;
     }
+
+    const parts = clarification.steps.map((s, idx) => {
+      const sel = idx === currentStep ? value : newSelections[s.id];
+      const opt = s.options.find((o) => o.value === sel);
+      return opt ? `${opt.label} (${opt.value})` : sel ?? "";
+    });
+    onSubmit(`Pilihan saya: ${parts.filter(Boolean).join(", ")}`);
   }
 
   function handleCustomSubmit() {
@@ -193,32 +193,38 @@ function ClarificationPanel({
   const canGoNext = currentStep < totalSteps - 1 && selections[step.id] !== undefined;
 
   return (
-    <div style={{
-      background: "#262626",
-      borderRadius: 14,
-      border: "1px solid #3a3a3a",
-      overflow: "hidden",
-      boxShadow: "0 -2px 16px rgba(0,0,0,0.08), 0 4px 16px rgba(0,0,0,0.06)",
-    }}>
-      {/* Header */}
-      <div style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: "14px 18px 12px",
-        borderBottom: "1px solid rgba(0,0,0,0.07)",
-        background: "linear-gradient(135deg, #2a2a2a 0%, #252525 100%)",
-        gap: 12,
-      }}>
-        <span style={{
-          fontSize: "0.9rem",
-          fontWeight: 600,
-          color: "#e1dccc",
-          flex: 1,
-          lineHeight: 1.4,
-        }}>
+    <div
+      style={{
+        background: "#262626",
+        borderRadius: 14,
+        border: "1px solid #3a3a3a",
+        overflow: "hidden",
+        boxShadow: "0 -2px 16px rgba(0,0,0,0.08), 0 4px 16px rgba(0,0,0,0.06)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "14px 18px 12px",
+          borderBottom: "1px solid rgba(0,0,0,0.07)",
+          background: "linear-gradient(135deg, #2a2a2a 0%, #252525 100%)",
+          gap: 12,
+        }}
+      >
+        <span
+          style={{
+            fontSize: "0.9rem",
+            fontWeight: 600,
+            color: "#e1dccc",
+            flex: 1,
+            lineHeight: 1.4,
+          }}
+        >
           {step.question}
         </span>
+
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
           {totalSteps > 1 && (
             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -226,11 +232,17 @@ function ClarificationPanel({
                 onClick={() => canGoPrev && setCurrentStep((s) => s - 1)}
                 disabled={!canGoPrev}
                 style={{
-                  background: "none", border: "none", cursor: canGoPrev ? "pointer" : "default",
-                  color: canGoPrev ? "#FE6C11" : "#ccc", fontSize: "1.1rem", padding: "2px 4px",
+                  background: "none",
+                  border: "none",
+                  cursor: canGoPrev ? "pointer" : "default",
+                  color: canGoPrev ? "#FE6C11" : "#ccc",
+                  fontSize: "1.1rem",
+                  padding: "2px 4px",
                   lineHeight: 1,
                 }}
-              >‹</button>
+              >
+                {"<"}
+              </button>
               <span style={{ fontSize: "0.78rem", color: "#8f8f8a", minWidth: 40, textAlign: "center" }}>
                 {currentStep + 1} of {totalSteps}
               </span>
@@ -238,30 +250,45 @@ function ClarificationPanel({
                 onClick={() => canGoNext && setCurrentStep((s) => s + 1)}
                 disabled={!canGoNext}
                 style={{
-                  background: "none", border: "none", cursor: canGoNext ? "pointer" : "default",
-                  color: canGoNext ? "#FE6C11" : "#ccc", fontSize: "1.1rem", padding: "2px 4px",
+                  background: "none",
+                  border: "none",
+                  cursor: canGoNext ? "pointer" : "default",
+                  color: canGoNext ? "#FE6C11" : "#ccc",
+                  fontSize: "1.1rem",
+                  padding: "2px 4px",
                   lineHeight: 1,
                 }}
-              >›</button>
+              >
+                {">"}
+              </button>
             </div>
           )}
+
           <button
             onClick={onClose}
             style={{
-              background: "none", border: "none", cursor: "pointer",
-              color: "#bbb", fontSize: "1.2rem", padding: "2px 4px",
-              lineHeight: 1, display: "flex", alignItems: "center",
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              color: "#bbb",
+              fontSize: "1.2rem",
+              padding: "2px 4px",
+              lineHeight: 1,
+              display: "flex",
+              alignItems: "center",
             }}
-          >×</button>
+          >
+            x
+          </button>
         </div>
       </div>
 
-      {/* Options list (scrollable, max ~4 visible) */}
       <div style={{ maxHeight: 224, overflowY: "auto" }}>
         {step.options.map((opt, idx) => {
           const isSelected = selections[step.id] === opt.value;
           const isHovered = hoveredOption === opt.value;
           const isActive = isSelected || isHovered;
+
           return (
             <button
               key={opt.value}
@@ -277,7 +304,9 @@ function ClarificationPanel({
                 padding: "12px 18px",
                 background: isSelected
                   ? "linear-gradient(135deg, #fff3eb 0%, #fff8f5 100%)"
-                  : isHovered ? "#fff8f5" : "transparent",
+                  : isHovered
+                    ? "#fff8f5"
+                    : "transparent",
                 border: "none",
                 borderBottom: "1px solid rgba(0,0,0,0.05)",
                 borderLeft: isSelected ? "3px solid #FE6C11" : "3px solid transparent",
@@ -287,59 +316,78 @@ function ClarificationPanel({
                 transition: "background .12s, border-color .12s",
               }}
             >
-              <span style={{
-                width: 26, height: 26, borderRadius: "50%", flexShrink: 0,
-                background: isActive
-                  ? "linear-gradient(135deg, #FE6C11, #FF4400)"
-                  : "rgba(0,0,0,0.06)",
-                color: isActive ? "#fff" : "#888",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                fontSize: "0.75rem", fontWeight: 700,
-                transition: "all .12s",
-              }}>
-                {isSelected ? "✓" : idx + 1}
+              <span
+                style={{
+                  width: 26,
+                  height: 26,
+                  borderRadius: "50%",
+                  flexShrink: 0,
+                  background: isActive
+                    ? "linear-gradient(135deg, #FE6C11, #FF4400)"
+                    : "rgba(0,0,0,0.06)",
+                  color: isActive ? "#fff" : "#888",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "0.75rem",
+                  fontWeight: 700,
+                  transition: "all .12s",
+                }}
+              >
+                {isSelected ? "v" : idx + 1}
               </span>
+
               <span style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
-                <span style={{
-                  fontSize: "0.88rem",
-                  color: isActive ? "#1a1a2e" : "#374151",
-                  fontWeight: isActive ? 600 : 400,
-                  lineHeight: 1.4,
-                }}>
+                <span
+                  style={{
+                    fontSize: "0.88rem",
+                    color: isActive ? "#1a1a2e" : "#374151",
+                    fontWeight: isActive ? 600 : 400,
+                    lineHeight: 1.4,
+                  }}
+                >
                   {opt.label}
                 </span>
                 {opt.description && (
-                  <span style={{
-                    fontSize: "0.75rem",
-                    color: isActive ? "#FE6C11" : "#9ca3af",
-                    lineHeight: 1.3,
-                    fontWeight: 400,
-                  }}>
+                  <span
+                    style={{
+                      fontSize: "0.75rem",
+                      color: isActive ? "#FE6C11" : "#9ca3af",
+                      lineHeight: 1.3,
+                      fontWeight: 400,
+                    }}
+                  >
                     {opt.description}
                   </span>
                 )}
               </span>
-              <span style={{
-                color: "#FE6C11",
-                opacity: isActive ? 1 : 0,
-                fontSize: "1rem",
-                transition: "opacity .12s",
-              }}>{isSelected ? "✓" : "→"}</span>
+
+              <span
+                style={{
+                  color: "#FE6C11",
+                  opacity: isActive ? 1 : 0,
+                  fontSize: "1rem",
+                  transition: "opacity .12s",
+                }}
+              >
+                {isSelected ? "v" : ">"}
+              </span>
             </button>
           );
         })}
       </div>
 
-      {/* Footer: custom text + Skip */}
-      <div style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        padding: "10px 18px",
-        borderTop: "1px solid rgba(0,0,0,0.06)",
-        background: "#232323",
-      }}>
-        <span style={{ color: "#bbb", fontSize: "1rem", flexShrink: 0 }}>✏</span>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "10px 18px",
+          borderTop: "1px solid rgba(0,0,0,0.06)",
+          background: "#232323",
+        }}
+      >
+        <span style={{ color: "#bbb", fontSize: "1rem", flexShrink: 0 }}>*</span>
         <input
           value={customText}
           onChange={(e) => setCustomText(e.target.value)}
@@ -369,19 +417,181 @@ function ClarificationPanel({
             padding: "5px 14px",
             transition: "all .12s",
           }}
-          onMouseEnter={e => {
+          onMouseEnter={(e) => {
             (e.currentTarget as HTMLButtonElement).style.background = "rgba(0,0,0,0.05)";
             (e.currentTarget as HTMLButtonElement).style.color = "#374151";
           }}
-          onMouseLeave={e => {
+          onMouseLeave={(e) => {
             (e.currentTarget as HTMLButtonElement).style.background = "none";
             (e.currentTarget as HTMLButtonElement).style.color = "#888";
           }}
-        >Skip</button>
+        >
+          Skip
+        </button>
       </div>
     </div>
   );
 }
+
+const ChatInput = React.memo(function ChatInput({
+  onSend,
+  disabled,
+  placeholder,
+  variant,
+}: {
+  onSend: (text: string) => void;
+  disabled: boolean;
+  placeholder: string;
+  variant: "hero" | "footer";
+}) {
+  const [value, setValue] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 160) + "px";
+  }, [value]);
+
+  const handleSubmit = useCallback(() => {
+    const trimmed = value.trim();
+    if (!trimmed || disabled) return;
+    onSend(trimmed);
+    setValue("");
+  }, [value, disabled, onSend]);
+
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        handleSubmit();
+      }
+    },
+    [handleSubmit]
+  );
+
+  const isActive = value.trim().length > 0 && !disabled;
+  const buttonSize = variant === "hero" ? 34 : 44;
+  const buttonRadius = variant === "hero" ? 10 : 14;
+  const buttonFontSize = variant === "hero" ? "0.95rem" : "1.2rem";
+
+  return (
+    <form
+      onSubmit={(e: FormEvent) => {
+        e.preventDefault();
+        handleSubmit();
+      }}
+      style={
+        variant === "hero"
+          ? {
+              width: "min(520px, 90%)",
+              background: "#2a2a2a",
+              borderRadius: 16,
+              border: "1px solid #3a3a3a",
+              padding: "14px 16px",
+              boxShadow: "0 14px 26px rgba(0, 0, 0, 0.3)",
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+            }
+          : {
+        width: "100%",
+              display: "flex",
+              alignItems: "flex-end",
+              gap: 12,
+              background: "linear-gradient(135deg, #2a2a2a 0%, #242424 100%)",
+              borderRadius: 18,
+              padding: "12px 12px 12px 18px",
+              border: "1.5px solid #3a3a3a",
+              transition: "all .2s ease",
+              boxShadow: "0 6px 20px rgba(0, 0, 0, 0.3)",
+            }
+      }
+      onMouseEnter={(e) => {
+        if (variant === "footer") {
+          (e.currentTarget as HTMLFormElement).style.borderColor = "#4a4a4a";
+          (e.currentTarget as HTMLFormElement).style.boxShadow = "0 10px 24px rgba(0, 0, 0, 0.4)";
+        }
+      }}
+      onMouseLeave={(e) => {
+        if (variant === "footer") {
+          (e.currentTarget as HTMLFormElement).style.borderColor = "#3a3a3a";
+          (e.currentTarget as HTMLFormElement).style.boxShadow = "0 6px 20px rgba(0, 0, 0, 0.3)";
+        }
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%" }}>
+        <textarea
+          ref={textareaRef}
+          rows={1}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder={placeholder}
+          disabled={disabled}
+          style={{
+            flex: "1 1 0%",
+            minWidth: 0,
+            width: "100%",
+            paddingRight: 0,
+            resize: "none",
+            border: "none",
+            background: "transparent",
+            outline: "none",
+            fontSize: "0.95rem",
+            lineHeight: 1.6,
+            color: "#e2ddd2",
+            fontFamily: "inherit",
+            maxHeight: 160,
+            overflowY: "auto",
+            opacity: disabled ? 0.6 : 1,
+            transition: "opacity .2s",
+          }}
+        />
+        <button
+          type="submit"
+          disabled={!isActive}
+          style={{
+            flexShrink: 0,
+            width: buttonSize,
+            height: buttonSize,
+            borderRadius: buttonRadius,
+            background: isActive
+              ? "linear-gradient(135deg, #c97342, #b76231)"
+              : "rgba(255,255,255,0.08)",
+            border: "none",
+            cursor: isActive ? "pointer" : "default",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            transition: "all .2s ease",
+            color: isActive ? "#fff" : "#8f8f8a",
+            fontSize: buttonFontSize,
+            boxShadow: isActive && variant === "footer" ? "0 4px 12px rgba(201, 115, 66, 0.35)" : "none",
+          }}
+          onMouseEnter={(e) => {
+            if (isActive && variant === "footer") {
+              (e.currentTarget as HTMLButtonElement).style.transform = "translateY(-2px)";
+              (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 8px 18px rgba(201, 115, 66, 0.45)";
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (variant === "footer") {
+              (e.currentTarget as HTMLButtonElement).style.transform = "translateY(0)";
+              (e.currentTarget as HTMLButtonElement).style.boxShadow = isActive
+                ? "0 4px 12px rgba(201, 115, 66, 0.35)"
+                : "none";
+            }
+          }}
+        >
+          {disabled ? <RadioButtonCheckedIcon sx={{ fontSize: 16 }} /> : "➤"}
+        </button>
+      </div>
+      {variant === "hero" && <div />}
+    </form>
+  );
+});
 
 /* ─────────────────────────── Toast ─────────────────────────── */
 function Toast({ type, message, onClose }: ToastState & { onClose: () => void }) {
@@ -1740,7 +1950,6 @@ export default function ChatPage() {
   const [sessionGreeting] = useState<string>(() => getTimeGreeting(new Date()));
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string>("");
-  const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -1781,7 +1990,6 @@ export default function ChatPage() {
   const [deleteBeforeLoading, setDeleteBeforeLoading] = useState(false);
 
   const bottomRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   /* ── Auth guard ── */
   useEffect(() => {
@@ -1958,13 +2166,6 @@ export default function ChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [conversations, activeId]);
 
-  /* ── Auto-resize textarea ── */
-  useEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = Math.min(el.scrollHeight, 160) + "px";
-  }, [input]);
 
   /* ── Helpers ── */
   function newConversation(): Conversation {
@@ -1984,7 +2185,6 @@ export default function ChatPage() {
     const c = newConversation();
     setConversations((prev) => [c, ...prev]);
     setActiveId(c.id);
-    setInput("");
   }
 
   /* ── Load history from API ── */
@@ -2012,7 +2212,6 @@ export default function ChatPage() {
   /* ── Select a conversation (and lazily load its history) ── */
   const handleSelectConv = useCallback(async (conv: Conversation) => {
     setActiveId(conv.id);
-    setInput("");
     // Only fetch if the conversation has been saved to API but messages aren't loaded yet
     if (conv.apiConversationId && conv.messages.length === 0) {
       await loadHistory(conv);
@@ -2349,12 +2548,12 @@ export default function ChatPage() {
   }
 
   /* ── Send message ── */
-  const sendMessage = useCallback(async (overrideText?: string) => {
-    const text = (overrideText ?? input).trim();
-    if (!text || streaming) return;
+  const sendMessage = useCallback(async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed || streaming) return;
 
     const userMsg: Message = {
-      id: uid(), role: "user", content: text, createdAt: new Date(),
+      id: uid(), role: "user", content: trimmed, createdAt: new Date(),
     };
 
     // Ambil apiConversationId SEBELUM setConversations (state updater berjalan async)
@@ -2368,12 +2567,11 @@ export default function ChatPage() {
         const isFirst = c.messages.length === 0;
         return {
           ...c,
-          title: isFirst ? text.slice(0, 45) + (text.length > 45 ? "…" : "") : c.title,
+          title: isFirst ? trimmed.slice(0, 45) + (trimmed.length > 45 ? "…" : "") : c.title,
           messages: [...c.messages, userMsg],
         };
       })
     );
-    setInput("");
     setActiveClarification(null);
     setStreaming(true);
 
@@ -2393,7 +2591,7 @@ export default function ChatPage() {
 
     try {
       const reqBody: ChatApiRequest = {
-        message: text,
+        message: trimmed,
         useLangChainMemory: true,
         conversationId: currentApiConvId,
         responseMode: { includeChartSpec: true },
@@ -2402,7 +2600,7 @@ export default function ChatPage() {
       // ── SSE streaming mode via EventSource ──
       if (useStream) {
         const params = new URLSearchParams({
-          message: text,
+          message: trimmed,
           useLangChainMemory: "true",
           includeChartSpec: "true",
           token: token, // Include token for EventSource authentication
@@ -2619,14 +2817,7 @@ export default function ChatPage() {
     } finally {
       setStreaming(false);
     }
-  }, [input, streaming, activeId, token, useStream, conversations]);
-
-  function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
-  }
+  }, [streaming, activeId, token, useStream, conversations]);
 
   /* ─────────────────────────── Render ─────────────────────────── */
   const hasMessages = (activeConv?.messages.length ?? 0) > 0;
@@ -3020,71 +3211,12 @@ export default function ChatPage() {
                   Informasi apa yang Anda inginkan saat ini?
                 </p>
               </div>
-              <form
-                onSubmit={(e: FormEvent) => { e.preventDefault(); sendMessage(); }}
-                style={{
-                  width: "min(520px, 90%)",
-                  background: "#2a2a2a",
-                  borderRadius: 16,
-                  border: "1px solid #3a3a3a",
-                  padding: "14px 16px",
-                  boxShadow: "0 14px 26px rgba(0, 0, 0, 0.3)",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 12,
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <textarea
-                    ref={textareaRef}
-                    rows={1}
-                    value={input}
-                    onChange={e => setInput(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder="A whole new way to work."
-                    disabled={streaming}
-                    style={{
-                      flex: 1,
-                      resize: "none",
-                      border: "none",
-                      background: "transparent",
-                      outline: "none",
-                      fontSize: "0.95rem",
-                      lineHeight: 1.6,
-                      color: "#e2ddd2",
-                      fontFamily: "inherit",
-                      maxHeight: 160,
-                      overflowY: "auto",
-                      opacity: streaming ? 0.6 : 1,
-                      transition: "opacity .2s",
-                    }}
-                  />
-                  <button
-                    type="submit"
-                    disabled={!input.trim() || streaming}
-                    style={{
-                      flexShrink: 0,
-                      width: 34,
-                      height: 34,
-                      borderRadius: 10,
-                      background: input.trim() && !streaming
-                        ? "linear-gradient(135deg, #c97342, #b76231)"
-                        : "rgba(255,255,255,0.08)",
-                      border: "none",
-                      cursor: input.trim() && !streaming ? "pointer" : "default",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      transition: "all .2s ease",
-                      color: input.trim() && !streaming ? "#fff" : "#8f8f8a",
-                      fontSize: "0.95rem",
-                    }}
-                  >
-                    {streaming ? <RadioButtonCheckedIcon sx={{ fontSize: 16 }} /> : "➤"}
-                  </button>
-                </div>
-                <div />
-              </form>
+              <ChatInput
+                onSend={sendMessage}
+                disabled={streaming}
+                placeholder="A whole new way to work."
+                variant="hero"
+              />
             </div>
           )}
 
@@ -3220,89 +3352,22 @@ export default function ChatPage() {
         {/* Input area */}
         {hasMessages && (
           <div style={{
-            padding: "16px 32px 24px",
+            padding: "16px 24px 24px",
             background: "linear-gradient(180deg, rgba(26,26,26,0.75) 0%, rgba(26,26,26,0.95) 100%)",
             borderTop: "1px solid #2f2f2f",
             flexShrink: 0,
             backdropFilter: "blur(8px)",
           }}>
-            <form
-              onSubmit={(e: FormEvent) => { e.preventDefault(); sendMessage(); }}
-              style={{
-                display: "flex", alignItems: "flex-end", gap: 12,
-                background: "linear-gradient(135deg, #2a2a2a 0%, #242424 100%)",
-                borderRadius: 18,
-                padding: "12px 12px 12px 18px",
-                border: "1.5px solid #3a3a3a",
-                transition: "all .2s ease",
-                boxShadow: "0 6px 20px rgba(0, 0, 0, 0.3)",
-              }}
-              onFocus={() => {}}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLFormElement).style.borderColor = "#4a4a4a";
-                (e.currentTarget as HTMLFormElement).style.boxShadow = "0 10px 24px rgba(0, 0, 0, 0.4)";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLFormElement).style.borderColor = "#3a3a3a";
-                (e.currentTarget as HTMLFormElement).style.boxShadow = "0 6px 20px rgba(0, 0, 0, 0.3)";
-              }}
-            >
-              <textarea
-                ref={textareaRef}
-                rows={1}
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Ketik pesan… (Enter kirim, Shift+Enter baris baru)"
-                disabled={streaming}
-                style={{
-                  flex: 1,
-                  resize: "none",
-                  border: "none",
-                  background: "transparent",
-                  outline: "none",
-                  fontSize: "0.95rem",
-                  lineHeight: 1.6,
-                  color: "#e2ddd2",
-                  fontFamily: "inherit",
-                  maxHeight: 160,
-                  overflowY: "auto",
-                  opacity: streaming ? 0.6 : 1,
-                  transition: "opacity .2s",
-                }}
-              />
-              <button
-                type="submit"
-                disabled={!input.trim() || streaming}
-                style={{
-                  flexShrink: 0,
-                  width: 44, height: 44,
-                  borderRadius: 14,
-                  background: input.trim() && !streaming
-                    ? "linear-gradient(135deg, #c97342 0%, #b76231 100%)"
-                    : "rgba(255,255,255,0.08)",
-                  border: "none",
-                  cursor: input.trim() && !streaming ? "pointer" : "default",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  transition: "all .2s ease",
-                  color: input.trim() && !streaming ? "#fff" : "#8f8f8a",
-                  fontSize: "1.2rem",
-                  boxShadow: input.trim() && !streaming ? "0 4px 12px rgba(201, 115, 66, 0.35)" : "none",
-                }}
-                onMouseEnter={(e) => {
-                  if (input.trim() && !streaming) {
-                    (e.currentTarget as HTMLButtonElement).style.transform = "translateY(-2px)";
-                    (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 8px 18px rgba(201, 115, 66, 0.45)";
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.transform = "translateY(0)";
-                  (e.currentTarget as HTMLButtonElement).style.boxShadow = input.trim() && !streaming ? "0 4px 12px rgba(201, 115, 66, 0.35)" : "none";
-                }}
-              >
-                {streaming ? <RadioButtonCheckedIcon sx={{ fontSize: 16 }} /> : "➤"}
-              </button>
-            </form>
+            <div style={{ display: "flex", justifyContent: "center" }}>
+              <div style={{ width: "min(960px, 100%)" }}>
+                <ChatInput
+                  onSend={sendMessage}
+                  disabled={streaming}
+                  placeholder="Ketik pesan… (Enter kirim, Shift+Enter baris baru)"
+                  variant="footer"
+                />
+              </div>
+            </div>
             <p style={{ fontSize: "0.75rem", color: "#8f8f8a", textAlign: "center", margin: "10px 0 0", fontStyle: "italic" }}>
               💡 AI dapat membuat kesalahan. Verifikasi informasi penting sebelum menggunakan.
             </p>
