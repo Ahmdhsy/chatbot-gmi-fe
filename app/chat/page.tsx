@@ -1753,17 +1753,118 @@ function normalizeMarkdownTables(content: string) {
   return out.join("\n");
 }
 
-function MarkdownMessage({ content }: { content: string }) {
-  const normalizedContent = normalizeMarkdownTables(normalizeInsightLists(content));
-  const insight = extractInsightSection(normalizedContent);
-  const insightCards = insight
-    ? insight.points
-      .map(parseInsightCard)
-      .filter((card): card is { value: string; label: string } => card !== null && card.value.trim().length > 0)
-    : [];
-  const hasInsightCards = !!insight && insightCards.length > 0;
+/* ── Virtual Pivot Table ────────────────────────────────────────────
+   Renders markdown tables with > VIRTUAL_TABLE_THRESHOLD rows using a
+   virtual scroll window so only ~20 rows are in the DOM at a time.
+   Without this, a 200-row × 60-col pivot = 12 000 DOM nodes → UI freeze.
+──────────────────────────────────────────────────────────────────── */
 
-  const markdownComponents: Components = {
+interface ParsedTableData {
+  headers: string[];
+  alignments: ("left" | "right" | "center")[];
+  rows: string[][];
+}
+
+function parseMdTableLines(lines: string[]): ParsedTableData | null {
+  const tableLines = lines.filter(l => isPipeRow(l));
+  if (tableLines.length < 3) return null;
+  const sepIdx = tableLines.findIndex(l => isSeparatorRow(l));
+  if (sepIdx < 1) return null;
+  const parseCells = (line: string) =>
+    line.replace(/^\||\|$/g, "").split("|").map(c => c.trim());
+  const headers = parseCells(tableLines[0]);
+  const alignments = parseCells(tableLines[sepIdx]).map(c => {
+    if (c.startsWith(":") && c.endsWith(":")) return "center" as const;
+    if (c.endsWith(":")) return "right" as const;
+    return "left" as const;
+  });
+  const rows = tableLines.slice(sepIdx + 1).map(parseCells);
+  return { headers, alignments, rows };
+}
+
+interface MdSegProse { kind: "prose"; text: string }
+interface MdSegTable { kind: "table"; lines: string[] }
+type MdSegment = MdSegProse | MdSegTable;
+
+function splitMdSegments(content: string): MdSegment[] {
+  const lines = content.split("\n");
+  const out: MdSegment[] = [];
+  let prose: string[] = [];
+  let table: string[] = [];
+  let inTable = false;
+  const flushProse = () => { const t = prose.join("\n"); if (t.trim()) out.push({ kind: "prose", text: t }); prose = []; };
+  const flushTable = () => { if (table.length) { out.push({ kind: "table", lines: [...table] }); table = []; } };
+  for (const line of lines) {
+    if (isPipeRow(line)) {
+      if (!inTable) { flushProse(); inTable = true; }
+      table.push(line);
+    } else {
+      if (inTable) { flushTable(); inTable = false; }
+      prose.push(line);
+    }
+  }
+  inTable ? flushTable() : flushProse();
+  return out;
+}
+
+const VIRTUAL_TABLE_THRESHOLD = 30;
+const VIRTUAL_ROW_H = 38;
+const VIRTUAL_VIEWPORT_H = 520;
+
+function VirtualPivotTable({ data }: { data: ParsedTableData }) {
+  const [scrollTop, setScrollTop] = useState(0);
+  const totalRows = data.rows.length;
+  const buffer = Math.ceil(VIRTUAL_VIEWPORT_H / VIRTUAL_ROW_H) + 4;
+  const startIdx = Math.max(0, Math.floor(scrollTop / VIRTUAL_ROW_H) - 2);
+  const endIdx = Math.min(totalRows, startIdx + buffer);
+  const padTop = startIdx * VIRTUAL_ROW_H;
+  const padBot = Math.max(0, (totalRows - endIdx) * VIRTUAL_ROW_H);
+
+  return (
+    <div style={{ margin: "10px 0", border: "1px solid #3c3c3c", borderRadius: 10, background: "#252525", overflow: "hidden" }}>
+      <div
+        style={{ overflowX: "auto", overflowY: "auto", maxHeight: VIRTUAL_VIEWPORT_H }}
+        onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+      >
+        <table style={{ width: "max-content", minWidth: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+          <thead style={{ background: "#2e2b28", position: "sticky", top: 0, zIndex: 2 }}>
+            <tr>
+              {data.headers.map((h, i) => (
+                <th key={i} style={{
+                  borderBottom: "2px solid #3c3c3c", borderRight: "1px solid #3c3c3c",
+                  padding: "8px 10px", fontWeight: 600, fontSize: "0.85rem",
+                  color: "#ece7db", whiteSpace: "nowrap", background: "#2e2b28",
+                  textAlign: data.alignments[i],
+                }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {padTop > 0 && <tr style={{ height: padTop }}><td colSpan={data.headers.length} /></tr>}
+            {data.rows.slice(startIdx, endIdx).map((row, ri) => (
+              <tr key={startIdx + ri} style={{ height: VIRTUAL_ROW_H }}>
+                {data.headers.map((_, ci) => (
+                  <td key={ci} style={{
+                    borderBottom: "1px solid #343434", borderRight: "1px solid #343434",
+                    padding: "6px 10px", fontSize: "0.85rem", color: "#d8d2c4",
+                    background: "#252525", whiteSpace: "nowrap", textAlign: data.alignments[ci],
+                  }}>{row[ci] ?? ""}</td>
+                ))}
+              </tr>
+            ))}
+            {padBot > 0 && <tr style={{ height: padBot }}><td colSpan={data.headers.length} /></tr>}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ padding: "5px 12px", fontSize: "0.74rem", color: "#888", borderTop: "1px solid #343434", background: "#232323" }}>
+        {totalRows} baris · {data.headers.length} kolom · scroll untuk melihat semua data
+      </div>
+    </div>
+  );
+}
+
+/* ── Shared markdown component map (defined once, not per-render) ── */
+const MD_COMPONENTS: Components = {
     p: ({ children }) => (
       <p style={{ margin: "0 0 10px 0" }}>{children}</p>
     ),
@@ -1855,88 +1956,75 @@ function MarkdownMessage({ content }: { content: string }) {
     ),
   };
 
+function MarkdownMessage({ content }: { content: string }) {
+  const normalizedContent = React.useMemo(
+    () => normalizeMarkdownTables(normalizeInsightLists(content)),
+    [content]
+  );
+  const segments = React.useMemo(() => splitMdSegments(normalizedContent), [normalizedContent]);
+  const insight = React.useMemo(() => extractInsightSection(normalizedContent), [normalizedContent]);
+  const insightCards = insight
+    ? insight.points
+        .map(parseInsightCard)
+        .filter((card): card is { value: string; label: string } => card !== null && card.value.trim().length > 0)
+    : [];
+  const hasInsightCards = !!insight && insightCards.length > 0;
+
+  const renderSegments = (segs: MdSegment[]) =>
+    segs.map((seg, idx) => {
+      if (seg.kind === "prose") {
+        if (!seg.text.trim()) return null;
+        return (
+          <ReactMarkdown key={idx} remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
+            {seg.text}
+          </ReactMarkdown>
+        );
+      }
+      const tableData = parseMdTableLines(seg.lines);
+      if (!tableData) {
+        return (
+          <ReactMarkdown key={idx} remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
+            {seg.lines.join("\n")}
+          </ReactMarkdown>
+        );
+      }
+      if (tableData.rows.length > VIRTUAL_TABLE_THRESHOLD) {
+        return <VirtualPivotTable key={idx} data={tableData} />;
+      }
+      return (
+        <ReactMarkdown key={idx} remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
+          {seg.lines.join("\n")}
+        </ReactMarkdown>
+      );
+    });
+
+  if (hasInsightCards && insight) {
+    const beforeSegs = splitMdSegments(insight.before || "");
+    const afterSegs = splitMdSegments(insight.after || "");
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {renderSegments(beforeSegs)}
+        <div style={{ background: "#ffffff", border: "1px solid #ffb596", borderRadius: 14, padding: "14px 14px 12px", display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ color: "#d66b3d", fontSize: "0.78rem", letterSpacing: "0.08em", fontWeight: 700, textTransform: "uppercase", display: "flex", alignItems: "center", gap: 6 }}>
+            <span>✦</span><span>Insight</span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10 }}>
+            {insightCards.map((card, idx) => (
+              <div key={`${idx}-${card.value}`} style={{ borderRadius: 12, border: "1px solid #ffc4a8", background: "#FFEDE7", padding: "12px 14px" }}>
+                <div style={{ color: "#cb6034", fontSize: "1.22rem", fontWeight: 700, lineHeight: 1.3 }}>{card.value}</div>
+                {!!card.label && <div style={{ marginTop: 4, color: "#7e604e", fontSize: "0.86rem", lineHeight: 1.5 }}>{card.label}</div>}
+              </div>
+            ))}
+          </div>
+        </div>
+        {renderSegments(afterSegs)}
+      </div>
+    );
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      {!hasInsightCards && (
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-          {normalizedContent}
-        </ReactMarkdown>
-      )}
-
-      {hasInsightCards && insight && (
-        <>
-          {!!insight.before && (
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-              {insight.before}
-            </ReactMarkdown>
-          )}
-
-          <div
-            style={{
-              background: "#ffffff",
-              border: "1px solid #ffb596",
-              borderRadius: 14,
-              padding: "14px 14px 12px",
-              display: "flex",
-              flexDirection: "column",
-              gap: 10,
-            }}
-          >
-            <div
-              style={{
-                color: "#d66b3d",
-                fontSize: "0.78rem",
-                letterSpacing: "0.08em",
-                fontWeight: 700,
-                textTransform: "uppercase",
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-              }}
-            >
-              <span>✦</span>
-              <span>Insight</span>
-            </div>
-
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-                gap: 10,
-              }}
-            >
-              {insightCards.map((card, idx) => {
-                return (
-                  <div
-                    key={`${idx}-${card.value}`}
-                    style={{
-                      borderRadius: 12,
-                      border: "1px solid #ffc4a8",
-                      background: "#FFEDE7",
-                      padding: "12px 14px",
-                    }}
-                  >
-                    <div style={{ color: "#cb6034", fontSize: "1.22rem", fontWeight: 700, lineHeight: 1.3 }}>
-                      {card.value}
-                    </div>
-                    {!!card.label && (
-                      <div style={{ marginTop: 4, color: "#7e604e", fontSize: "0.86rem", lineHeight: 1.5 }}>
-                        {card.label}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {!!insight.after && (
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-              {insight.after}
-            </ReactMarkdown>
-          )}
-        </>
-      )}
+      {renderSegments(segments)}
     </div>
   );
 }
