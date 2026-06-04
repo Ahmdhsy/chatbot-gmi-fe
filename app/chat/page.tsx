@@ -13,6 +13,7 @@ import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
 import RadioButtonCheckedIcon from "@mui/icons-material/RadioButtonChecked";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
@@ -1784,18 +1785,31 @@ function parseMdTableLines(lines: string[]): ParsedTableData | null {
 
 interface MdSegProse { kind: "prose"; text: string }
 interface MdSegTable { kind: "table"; lines: string[] }
-type MdSegment = MdSegProse | MdSegTable;
+interface MdSegHtmlTable { kind: "html_table"; html: string }
+type MdSegment = MdSegProse | MdSegTable | MdSegHtmlTable;
 
 function splitMdSegments(content: string): MdSegment[] {
   const lines = content.split("\n");
   const out: MdSegment[] = [];
   let prose: string[] = [];
   let table: string[] = [];
+  let htmlTable: string[] = [];
   let inTable = false;
+  let inHtmlTable = false;
   const flushProse = () => { const t = prose.join("\n"); if (t.trim()) out.push({ kind: "prose", text: t }); prose = []; };
   const flushTable = () => { if (table.length) { out.push({ kind: "table", lines: [...table] }); table = []; } };
+  const flushHtmlTable = () => { if (htmlTable.length) { out.push({ kind: "html_table", html: htmlTable.join("\n") }); htmlTable = []; } };
   for (const line of lines) {
-    if (isPipeRow(line)) {
+    const trimmed = line.trim();
+    if (!inHtmlTable && trimmed === "<table>") {
+      flushProse();
+      flushTable(); inTable = false;
+      inHtmlTable = true;
+      htmlTable.push(line);
+    } else if (inHtmlTable) {
+      htmlTable.push(line);
+      if (trimmed === "</table>") { inHtmlTable = false; flushHtmlTable(); }
+    } else if (isPipeRow(line)) {
       if (!inTable) { flushProse(); inTable = true; }
       table.push(line);
     } else {
@@ -1803,7 +1817,9 @@ function splitMdSegments(content: string): MdSegment[] {
       prose.push(line);
     }
   }
-  inTable ? flushTable() : flushProse();
+  if (inHtmlTable) flushHtmlTable();
+  else if (inTable) flushTable();
+  else flushProse();
   return out;
 }
 
@@ -1863,6 +1879,132 @@ function VirtualPivotTable({ data }: { data: ParsedTableData }) {
   );
 }
 
+/* ── Virtual HTML Pivot Table ───────────────────────────────────────
+   Parses an HTML <table> with nested headers (rowspan/colspan) and
+   renders it with virtual scrolling so large pivots don't freeze the UI.
+──────────────────────────────────────────────────────────────────── */
+
+interface HtmlPivotData {
+  dimHeaders: string[];
+  groupHeaders: { label: string; span: number }[];
+  variantHeaders: string[];
+  rows: string[][];
+  colIsNumeric: boolean[];
+}
+
+function parseHtmlPivotTable(html: string): HtmlPivotData | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const thead = doc.querySelector("thead");
+    const tbody = doc.querySelector("tbody");
+    if (!thead) return null;
+    const headerRows = thead.querySelectorAll("tr");
+    if (headerRows.length < 2) return null;
+
+    const dimHeaders: string[] = [];
+    const groupHeaders: { label: string; span: number }[] = [];
+    headerRows[0].querySelectorAll("th").forEach(th => {
+      const rs = parseInt(th.getAttribute("rowspan") || "1");
+      if (rs >= 2) {
+        dimHeaders.push(th.textContent?.trim() || "");
+      } else {
+        const cs = parseInt(th.getAttribute("colspan") || "1");
+        groupHeaders.push({ label: th.textContent?.trim() || "", span: cs });
+      }
+    });
+
+    const variantHeaders: string[] = [];
+    headerRows[1].querySelectorAll("th").forEach(th =>
+      variantHeaders.push(th.textContent?.trim() || "")
+    );
+
+    const totalCols = dimHeaders.length + variantHeaders.length;
+    const colIsNumeric = new Array(totalCols).fill(false);
+    const rows: string[][] = [];
+    tbody?.querySelectorAll("tr").forEach(tr => {
+      const cells: string[] = [];
+      tr.querySelectorAll("td").forEach((td, ci) => {
+        cells.push(td.textContent?.trim() || "");
+        if (!colIsNumeric[ci] && (td.getAttribute("style") || "").includes("right"))
+          colIsNumeric[ci] = true;
+      });
+      rows.push(cells);
+    });
+
+    return { dimHeaders, groupHeaders, variantHeaders, rows, colIsNumeric };
+  } catch {
+    return null;
+  }
+}
+
+function VirtualHtmlPivotTable({ html }: { html: string }) {
+  const [scrollTop, setScrollTop] = useState(0);
+  const data = React.useMemo(() => parseHtmlPivotTable(html), [html]);
+
+  if (!data) return null;
+
+  const totalRows = data.rows.length;
+  const totalCols = data.dimHeaders.length + data.variantHeaders.length;
+  const buffer = Math.ceil(VIRTUAL_VIEWPORT_H / VIRTUAL_ROW_H) + 4;
+  const startIdx = Math.max(0, Math.floor(scrollTop / VIRTUAL_ROW_H) - 2);
+  const endIdx = Math.min(totalRows, startIdx + buffer);
+  const padTop = startIdx * VIRTUAL_ROW_H;
+  const padBot = Math.max(0, (totalRows - endIdx) * VIRTUAL_ROW_H);
+
+  const TH_STYLE: React.CSSProperties = {
+    borderBottom: "1px solid #3c3c3c", borderRight: "1px solid #3c3c3c",
+    padding: "8px 10px", fontWeight: 600, fontSize: "0.85rem",
+    color: "#ece7db", whiteSpace: "nowrap", background: "#2e2b28",
+  };
+
+  return (
+    <div style={{ margin: "10px 0", border: "1px solid #3c3c3c", borderRadius: 10, background: "#252525", overflow: "hidden" }}>
+      <div
+        style={{ overflowX: "auto", overflowY: "auto", maxHeight: VIRTUAL_VIEWPORT_H }}
+        onScroll={e => setScrollTop(e.currentTarget.scrollTop)}
+      >
+        <table style={{ width: "max-content", minWidth: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+          <thead style={{ background: "#2e2b28", position: "sticky", top: 0, zIndex: 2 }}>
+            <tr>
+              {data.dimHeaders.map((h, i) => (
+                <th key={`d${i}`} rowSpan={2} style={TH_STYLE}>{h}</th>
+              ))}
+              {data.groupHeaders.map((g, i) => (
+                <th key={`g${i}`} colSpan={g.span} style={{ ...TH_STYLE, textAlign: "center" }}>{g.label}</th>
+              ))}
+            </tr>
+            <tr>
+              {data.variantHeaders.map((v, i) => (
+                <th key={`v${i}`} style={TH_STYLE}>{v || " "}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {padTop > 0 && <tr style={{ height: padTop }}><td colSpan={totalCols} /></tr>}
+            {data.rows.slice(startIdx, endIdx).map((row, ri) => (
+              <tr key={startIdx + ri} style={{ height: VIRTUAL_ROW_H }}>
+                {row.map((cell, ci) => (
+                  <td key={ci} style={{
+                    borderBottom: "1px solid #343434", borderRight: "1px solid #343434",
+                    padding: "6px 10px", fontSize: "0.85rem", color: "#d8d2c4",
+                    background: "#252525", whiteSpace: "nowrap",
+                    textAlign: data.colIsNumeric[ci] ? "right" : "left",
+                  }}>{cell}</td>
+                ))}
+              </tr>
+            ))}
+            {padBot > 0 && <tr style={{ height: padBot }}><td colSpan={totalCols} /></tr>}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ padding: "5px 12px", fontSize: "0.74rem", color: "#888", borderTop: "1px solid #343434", background: "#232323" }}>
+        {totalRows} baris · {totalCols} kolom · scroll untuk melihat semua data
+      </div>
+    </div>
+  );
+}
+
 /* ── Shared markdown component map (defined once, not per-render) ── */
 const MD_COMPONENTS: Components = {
     p: ({ children }) => (
@@ -1906,8 +2048,10 @@ const MD_COMPONENTS: Components = {
     tr: ({ children }) => (
       <tr style={{ borderBottom: "1px solid #3c3c3c" }}>{children}</tr>
     ),
-    th: ({ children }) => (
+    th: ({ children, colSpan, rowSpan, style }) => (
       <th
+        colSpan={colSpan}
+        rowSpan={rowSpan}
         style={{
           borderBottom: "1px solid #3c3c3c",
           borderRight: "1px solid #3c3c3c",
@@ -1918,13 +2062,16 @@ const MD_COMPONENTS: Components = {
           color: "#ece7db",
           whiteSpace: "nowrap",
           wordBreak: "normal",
+          ...(style && typeof style === "object" ? style : {}),
         }}
       >
         {children}
       </th>
     ),
-    td: ({ children }) => (
+    td: ({ children, colSpan, rowSpan, style }) => (
       <td
+        colSpan={colSpan}
+        rowSpan={rowSpan}
         style={{
           borderBottom: "1px solid #343434",
           borderRight: "1px solid #343434",
@@ -1935,6 +2082,7 @@ const MD_COMPONENTS: Components = {
           background: "#252525",
           whiteSpace: "nowrap",
           wordBreak: "normal",
+          ...(style && typeof style === "object" ? style : {}),
         }}
       >
         {children}
@@ -1975,15 +2123,19 @@ function MarkdownMessage({ content }: { content: string }) {
       if (seg.kind === "prose") {
         if (!seg.text.trim()) return null;
         return (
-          <ReactMarkdown key={idx} remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
+          <ReactMarkdown key={idx} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={MD_COMPONENTS}>
             {seg.text}
           </ReactMarkdown>
         );
       }
+      // HTML pivot table (nested headers) — always use virtual scroll
+      if (seg.kind === "html_table") {
+        return <VirtualHtmlPivotTable key={idx} html={seg.html} />;
+      }
       const tableData = parseMdTableLines(seg.lines);
       if (!tableData) {
         return (
-          <ReactMarkdown key={idx} remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
+          <ReactMarkdown key={idx} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={MD_COMPONENTS}>
             {seg.lines.join("\n")}
           </ReactMarkdown>
         );
@@ -1992,7 +2144,7 @@ function MarkdownMessage({ content }: { content: string }) {
         return <VirtualPivotTable key={idx} data={tableData} />;
       }
       return (
-        <ReactMarkdown key={idx} remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
+        <ReactMarkdown key={idx} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={MD_COMPONENTS}>
           {seg.lines.join("\n")}
         </ReactMarkdown>
       );
