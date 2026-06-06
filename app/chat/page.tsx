@@ -1433,7 +1433,7 @@ function buildHistoryStorageKey(email: string) {
   return `${HISTORY_STORAGE_PREFIX}${safeEmail}`;
 }
 
-function serializeHistory(conversations: Conversation[], activeId: string) {
+function serializeHistory(conversations: Conversation[], activeId: string, stripHeavy = false) {
   const payload: StoredHistoryPayload = {
     activeId,
     conversations: conversations.map((conv) => ({
@@ -1442,10 +1442,41 @@ function serializeHistory(conversations: Conversation[], activeId: string) {
       messages: conv.messages.map((msg) => ({
         ...msg,
         createdAt: msg.createdAt.toISOString(),
+        // Drop large, re-fetchable payloads when storage is tight
+        ...(stripHeavy ? { evidence: undefined, chart: null, data: null } : {}),
       })),
     })),
   };
   return JSON.stringify(payload);
+}
+
+function isQuotaExceededError(err: unknown) {
+  return err instanceof DOMException
+    && (err.name === "QuotaExceededError" || err.name === "NS_ERROR_DOM_QUOTA_REACHED");
+}
+
+/** Persist history to localStorage, degrading gracefully when the quota is exceeded. */
+function persistHistorySafely(storageKey: string, conversations: Conversation[], activeId: string) {
+  try {
+    localStorage.setItem(storageKey, serializeHistory(conversations, activeId));
+    return;
+  } catch (err) {
+    if (!isQuotaExceededError(err)) return;
+  }
+  try {
+    // Retry without chart/data/evidence — these are re-fetched from the API anyway
+    localStorage.setItem(storageKey, serializeHistory(conversations, activeId, true));
+    return;
+  } catch (err) {
+    if (!isQuotaExceededError(err)) return;
+  }
+  try {
+    // Last resort: keep only the most recent conversations, stripped down
+    const recent = conversations.slice(0, 10);
+    localStorage.setItem(storageKey, serializeHistory(recent, activeId, true));
+  } catch {
+    console.warn("Tidak dapat menyimpan riwayat percakapan secara lokal — kuota penyimpanan penuh.");
+  }
 }
 
 function hydrateHistory(raw: string | null) {
@@ -2397,8 +2428,7 @@ export default function ChatPage() {
   useEffect(() => {
     if (!historyReady || !userEmail) return;
     const storageKey = buildHistoryStorageKey(userEmail);
-    const payload = serializeHistory(conversations, activeId);
-    localStorage.setItem(storageKey, payload);
+    persistHistorySafely(storageKey, conversations, activeId);
   }, [conversations, activeId, historyReady, userEmail]);
 
   /* ── Scroll to bottom when messages change ── */
