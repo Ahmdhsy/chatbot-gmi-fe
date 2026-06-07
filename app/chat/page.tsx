@@ -439,14 +439,23 @@ const ChatInput = React.memo(function ChatInput({
   disabled,
   placeholder,
   variant,
+  onFileUpload,
+  activeFile,
+  onClearFile,
+  fileUploadError,
 }: {
   onSend: (text: string) => void;
   disabled: boolean;
   placeholder: string;
   variant: "hero" | "footer";
+  onFileUpload?: (file: File) => void;
+  activeFile?: { fileId: string; filename: string; status: "uploading" | "ready" | "error" } | null;
+  onClearFile?: () => void;
+  fileUploadError?: string | null;
 }) {
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -522,7 +531,100 @@ const ChatInput = React.memo(function ChatInput({
         }
       }}
     >
+      {/* File context banner */}
+      {(activeFile || fileUploadError) && (
+        <div style={{ marginBottom: 8 }}>
+          {activeFile && (
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "6px 10px",
+              borderRadius: 8,
+              background: activeFile.status === "uploading" ? "rgba(201,115,66,0.12)" : "rgba(80,180,120,0.12)",
+              border: `1px solid ${activeFile.status === "uploading" ? "rgba(201,115,66,0.3)" : "rgba(80,180,120,0.3)"}`,
+              fontSize: "0.82rem",
+              color: activeFile.status === "uploading" ? "#c97342" : "#6ecf98",
+            }}>
+              <span>{activeFile.status === "uploading" ? "⏳" : "📄"}</span>
+              <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {activeFile.status === "uploading"
+                  ? `Memproses ${activeFile.filename}…`
+                  : `${activeFile.filename} — pertanyaan akan dijawab dari file ini`}
+              </span>
+              {activeFile.status === "ready" && onClearFile && (
+                <button
+                  type="button"
+                  onClick={onClearFile}
+                  title="Hapus konteks file"
+                  style={{
+                    background: "none", border: "none", cursor: "pointer",
+                    color: "#6ecf98", fontSize: "1rem", lineHeight: 1, padding: "0 2px",
+                    flexShrink: 0,
+                  }}
+                >×</button>
+              )}
+            </div>
+          )}
+          {fileUploadError && (
+            <div style={{
+              padding: "5px 10px",
+              borderRadius: 8,
+              background: "rgba(220,60,60,0.12)",
+              border: "1px solid rgba(220,60,60,0.3)",
+              fontSize: "0.82rem",
+              color: "#e07070",
+              marginTop: activeFile ? 4 : 0,
+            }}>
+              ⚠ {fileUploadError}
+            </div>
+          )}
+        </div>
+      )}
+
       <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%" }}>
+        {/* Hidden file input */}
+        {onFileUpload && (
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) onFileUpload(f);
+                e.target.value = "";
+              }}
+            />
+            {/* Paperclip button */}
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={activeFile?.status === "uploading"}
+              title="Upload file Excel/CSV"
+              style={{
+                flexShrink: 0,
+                width: 36,
+                height: 36,
+                borderRadius: 10,
+                background: activeFile?.status === "ready" ? "rgba(80,180,120,0.18)" : "rgba(255,255,255,0.07)",
+                border: `1px solid ${activeFile?.status === "ready" ? "rgba(80,180,120,0.4)" : "transparent"}`,
+                cursor: activeFile?.status === "uploading" ? "default" : "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: activeFile?.status === "ready" ? "#6ecf98" : "#8f8f8a",
+                fontSize: "1.05rem",
+                opacity: activeFile?.status === "uploading" ? 0.5 : 1,
+                transition: "all .2s ease",
+              }}
+            >
+              📎
+            </button>
+          </>
+        )}
+
         <textarea
           ref={textareaRef}
           rows={1}
@@ -2262,6 +2364,11 @@ export default function ChatPage() {
 
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  /* ── File upload context ── */
+  type ActiveFile = { fileId: string; filename: string; status: "uploading" | "ready" | "error" };
+  const [activeFile, setActiveFile] = useState<ActiveFile | null>(null);
+  const [fileUploadError, setFileUploadError] = useState<string | null>(null);
+
   /* ── Auth guard ── */
   useEffect(() => {
     let cancelled = false;
@@ -2436,6 +2543,12 @@ export default function ChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [conversations, activeId]);
 
+  /* ── Reset file context when switching conversations ── */
+  useEffect(() => {
+    setActiveFile(null);
+    setFileUploadError(null);
+  }, [activeId]);
+
 
   /* ── Helpers ── */
   function newConversation(): Conversation {
@@ -2456,6 +2569,39 @@ export default function ChatPage() {
     setConversations((prev) => [c, ...prev]);
     setActiveId(c.id);
   }
+
+  /* ── Handle file upload for file-scoped chat ── */
+  const handleFileUpload = useCallback(async (file: File) => {
+    if (!token || !activeId) return;
+    const currentApiConvId =
+      conversations.find((c) => c.id === activeId)?.apiConversationId ?? activeId;
+
+    setActiveFile({ fileId: "", filename: file.name, status: "uploading" });
+    setFileUploadError(null);
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const url = `${API_BASE}/files/upload?autoIngest=true&conversationId=${encodeURIComponent(currentApiConvId)}`;
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      if (data.ingestionResult?.status === "failed") {
+        setActiveFile(null);
+        setFileUploadError("Gagal memproses file: " + (data.ingestionResult.error ?? "Unknown error"));
+        return;
+      }
+      setActiveFile({ fileId: data.fileId, filename: file.name, status: "ready" });
+    } catch (err) {
+      setActiveFile(null);
+      setFileUploadError("Upload gagal: " + String(err));
+    }
+  }, [token, activeId, conversations]);
 
   /* ── Load history from API ── */
   const loadHistory = useCallback(async (conv: Conversation) => {
@@ -2865,6 +3011,7 @@ export default function ChatPage() {
         useLangChainMemory: true,
         conversationId: currentApiConvId,
         responseMode: { includeChartSpec: true },
+        context: activeFile?.status === "ready" ? { fileIds: [activeFile.fileId] } : undefined,
       };
 
       // ── SSE streaming mode via EventSource ──
@@ -3486,6 +3633,10 @@ export default function ChatPage() {
                 disabled={streaming}
                 placeholder="A whole new way to work."
                 variant="hero"
+                onFileUpload={handleFileUpload}
+                activeFile={activeFile}
+                onClearFile={() => { setActiveFile(null); setFileUploadError(null); }}
+                fileUploadError={fileUploadError}
               />
             </div>
           )}
@@ -3635,6 +3786,10 @@ export default function ChatPage() {
                   disabled={streaming}
                   placeholder="Ketik pesan… (Enter kirim, Shift+Enter baris baru)"
                   variant="footer"
+                  onFileUpload={handleFileUpload}
+                  activeFile={activeFile}
+                  onClearFile={() => { setActiveFile(null); setFileUploadError(null); }}
+                  fileUploadError={fileUploadError}
                 />
               </div>
             </div>
