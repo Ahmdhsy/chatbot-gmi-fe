@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { SidebarProvider } from "@/components/Layouts/sidebar/sidebar-context";
 import { ThemeProvider } from "next-themes";
-import { getAccessTokenFromCookie, getRoleFromCookie } from "../lib/auth";
+import { getAccessTokenFromCookie, getRoleFromCookie, setRoleCookie } from "../lib/auth";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8001/v1";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -16,11 +18,43 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
     if (!token) {
       router.replace("/signin");
-    } else if (role !== "superadmin") {
-      router.replace("/chat");
-    } else {
-      setAuthorized(true);
+      return;
     }
+
+    // If cookie role is already superadmin, allow immediately
+    if (role === "superadmin") {
+      setAuthorized(true);
+      return;
+    }
+
+    // Fallback: verify role with backend to handle missing/out-of-sync cookies
+    const verifyRoleWithBackend = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/auth/me`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const freshRole = data?.role;
+          if (freshRole === "superadmin") {
+            setRoleCookie(freshRole, 7);
+            setAuthorized(true);
+          } else {
+            router.replace("/chat");
+          }
+        } else {
+          router.replace("/signin");
+        }
+      } catch (err) {
+        console.error("Failed to verify user role with backend:", err);
+        router.replace("/chat"); // Safeguard: redirect to chat if check fails
+      }
+    };
+
+    verifyRoleWithBackend();
   }, [router]);
 
   if (!authorized) {
