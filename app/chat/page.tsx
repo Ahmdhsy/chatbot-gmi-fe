@@ -614,13 +614,29 @@ const ChatInput = React.memo(function ChatInput({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                color: activeFile?.status === "ready" ? "#6ecf98" : "#8f8f8a",
-                fontSize: "1.05rem",
                 opacity: activeFile?.status === "uploading" ? 0.5 : 1,
                 transition: "all .2s ease",
               }}
+              onMouseEnter={(e) => {
+                if (activeFile?.status !== "uploading") {
+                  e.currentTarget.style.background = activeFile?.status === "ready" ? "rgba(80,180,120,0.25)" : "rgba(255,255,255,0.12)";
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (activeFile?.status !== "uploading") {
+                  e.currentTarget.style.background = activeFile?.status === "ready" ? "rgba(80,180,120,0.18)" : "rgba(255,255,255,0.07)";
+                }
+              }}
             >
-              📎
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                height="24px"
+                viewBox="0 -960 960 960"
+                width="24px"
+                fill={activeFile?.status === "ready" ? "#6ecf98" : "#e3e3e3"}
+              >
+                <path d="M640-520v-200h80v200h-80ZM440-244q-35-10-57.5-39T360-350v-370h80v476Zm30 164q-104 0-177-73t-73-177v-370q0-75 52.5-127.5T400-880q75 0 127.5 52.5T580-700v300h-80v-300q-1-42-29.5-71T400-800q-42 0-71 29t-29 71v370q-1 71 49 120.5T470-160q25 0 47.5-6.5T560-186v89q-21 8-43.5 12.5T470-80Zm170-40v-120H520v-80h120v-120h80v120h120v80H720v120h-80Z" />
+              </svg>
             </button>
           </>
         )}
@@ -2323,6 +2339,7 @@ export default function ChatPage() {
   const [sessionGreeting] = useState<string>(() => getTimeGreeting(new Date()));
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string>("");
+  const [loadedHistoryIds, setLoadedHistoryIds] = useState<Set<string>>(new Set());
   const [streaming, setStreaming] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -2363,11 +2380,54 @@ export default function ChatPage() {
   const [deleteBeforeLoading, setDeleteBeforeLoading] = useState(false);
 
   const bottomRef = useRef<HTMLDivElement>(null);
+  const loadedConvIdsRef = useRef<Set<string>>(new Set());
 
   /* ── File upload context ── */
   type ActiveFile = { fileId: string; filename: string; status: "uploading" | "ready" | "error" };
   const [activeFile, setActiveFile] = useState<ActiveFile | null>(null);
   const [fileUploadError, setFileUploadError] = useState<string | null>(null);
+
+  /* ── Load history from API ── */
+  const loadHistory = useCallback(async (conv: Conversation) => {
+    if (!token) return;
+    if (!conv.apiConversationId || (conv.messages && conv.messages.length > 0)) {
+      setLoadedHistoryIds((prev) => {
+        if (prev.has(conv.id)) return prev;
+        const next = new Set(prev);
+        next.add(conv.id);
+        return next;
+      });
+      return;
+    }
+    if (loadedConvIdsRef.current.has(conv.id)) return;
+    loadedConvIdsRef.current.add(conv.id);
+
+    try {
+      const res = await fetch(
+        `${API_BASE}/chat/history/${encodeURIComponent(conv.apiConversationId)}?limit=50`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (res.ok) {
+        const raw = await res.json();
+        const historyMessages = normalizeHistoryMessages(raw);
+        if (historyMessages.length > 0) {
+          setConversations((prev) =>
+            prev.map((c) =>
+              c.id !== conv.id ? c : { ...c, messages: historyMessages }
+            )
+          );
+        }
+      }
+    } catch (err) {
+      console.error("Gagal memuat riwayat:", err);
+    } finally {
+      setLoadedHistoryIds((prev) => {
+        const next = new Set(prev);
+        next.add(conv.id);
+        return next;
+      });
+    }
+  }, [token]);
 
   /* ── Auth guard ── */
   useEffect(() => {
@@ -2423,8 +2483,27 @@ export default function ChatPage() {
                     : new Date(),
               } as Conversation;
             });
+            // Choose the active ID: URL query parameter first, then localStorage, then default to first conversation
+            const queryParams = new URLSearchParams(window.location.search);
+            const urlActiveId = queryParams.get("id");
+            const storageKey = buildHistoryStorageKey(resolvedEmail);
+            let storedActiveId = "";
+            try {
+              const stored = hydrateHistory(localStorage.getItem(storageKey));
+              if (stored) storedActiveId = stored.activeId;
+            } catch {
+              // ignore
+            }
+
+            let targetActiveId = mapped[0].id;
+            if (urlActiveId && mapped.some((c) => c.id === urlActiveId)) {
+              targetActiveId = urlActiveId;
+            } else if (storedActiveId && mapped.some((c) => c.id === storedActiveId)) {
+              targetActiveId = storedActiveId;
+            }
+
             setConversations(mapped);
-            setActiveId(mapped[0].id);
+            setActiveId(targetActiveId);
             setHistoryReady(true);
 
             // Update titles from latest human message in langchain_conversation_history (non-blocking)
@@ -2472,12 +2551,18 @@ export default function ChatPage() {
       const stored = hydrateHistory(localStorage.getItem(storageKey));
       if (stored?.conversations.length) {
         setConversations(stored.conversations);
-        const hasActive = stored.conversations.some((c) => c.id === stored.activeId);
-        setActiveId(hasActive ? stored.activeId : stored.conversations[0].id);
+        const queryParams = new URLSearchParams(window.location.search);
+        const urlActiveId = queryParams.get("id");
+        const hasUrlActive = urlActiveId && stored.conversations.some((c) => c.id === urlActiveId);
+        const hasStoredActive = stored.conversations.some((c) => c.id === stored.activeId);
+        
+        setActiveId(hasUrlActive ? urlActiveId : hasStoredActive ? stored.activeId : stored.conversations[0].id);
       } else {
         // start with a fresh conversation
         const first = newConversation();
         setConversations([first]);
+        loadedConvIdsRef.current.add(first.id);
+        setLoadedHistoryIds(new Set([first.id]));
         setActiveId(first.id);
       }
       setHistoryReady(true);
@@ -2498,6 +2583,8 @@ export default function ChatPage() {
           setHistoryReady(true);
           const first = newConversation();
           setConversations([first]);
+          loadedConvIdsRef.current.add(first.id);
+          setLoadedHistoryIds(new Set([first.id]));
           setActiveId(first.id);
           setToast({ type: "error", message: "Sesi belum terbaca dari cookie. Silakan login ulang." });
         }
@@ -2549,6 +2636,25 @@ export default function ChatPage() {
     setFileUploadError(null);
   }, [activeId]);
 
+  /* ── Sync activeId to browser URL query parameter ── */
+  useEffect(() => {
+    if (!activeId || !historyReady) return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("id") !== activeId) {
+      url.searchParams.set("id", activeId);
+      window.history.replaceState(null, "", url.pathname + url.search);
+    }
+  }, [activeId, historyReady]);
+
+  /* ── Auto-load history for active conversation ── */
+  useEffect(() => {
+    if (!activeId || !historyReady || !token) return;
+    const activeConv = conversations.find((c) => c.id === activeId);
+    if (activeConv) {
+      loadHistory(activeConv);
+    }
+  }, [activeId, historyReady, token, conversations, loadHistory]);
+
 
   /* ── Helpers ── */
   function newConversation(): Conversation {
@@ -2567,6 +2673,12 @@ export default function ChatPage() {
   function handleNewChat() {
     const c = newConversation();
     setConversations((prev) => [c, ...prev]);
+    loadedConvIdsRef.current.add(c.id);
+    setLoadedHistoryIds((prev) => {
+      const next = new Set(prev);
+      next.add(c.id);
+      return next;
+    });
     setActiveId(c.id);
   }
 
@@ -2603,27 +2715,7 @@ export default function ChatPage() {
     }
   }, [token, activeId, conversations]);
 
-  /* ── Load history from API ── */
-  const loadHistory = useCallback(async (conv: Conversation) => {
-    if (!conv.apiConversationId || !token) return;
-    try {
-      const res = await fetch(
-        `${API_BASE}/chat/history/${encodeURIComponent(conv.apiConversationId)}?limit=50`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (!res.ok) return; // silently ignore — history is optional
-      const raw = await res.json();
-      const historyMessages = normalizeHistoryMessages(raw);
-      if (!historyMessages.length) return;
-      setConversations((prev) =>
-        prev.map((c) =>
-          c.id !== conv.id ? c : { ...c, messages: historyMessages }
-        )
-      );
-    } catch {
-      // network failure — skip silently
-    }
-  }, [token]);
+
 
   /* ── Select a conversation (and lazily load its history) ── */
   const handleSelectConv = useCallback(async (conv: Conversation) => {
@@ -3238,7 +3330,8 @@ export default function ChatPage() {
 
   /* ─────────────────────────── Render ─────────────────────────── */
   const hasMessages = (activeConv?.messages.length ?? 0) > 0;
-  if (!authReady) {
+  const isHistoryLoading = !!(activeConv && activeConv.apiConversationId && !loadedHistoryIds.has(activeId));
+  if (!authReady || !historyReady) {
     return (
       <div
         style={{
@@ -3588,7 +3681,20 @@ export default function ChatPage() {
 
         {/* Messages */}
         <div style={{ flex: 1, overflowY: "auto", padding: "28px 32px", display: "flex", flexDirection: "column", gap: 20, background: "linear-gradient(180deg, #1f1f1f 0%, #1a1a1a 100%)" }}>
-          {!hasMessages && (
+          {isHistoryLoading ? (
+            <div
+              style={{
+                flex: 1,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#8f8f8a",
+                fontSize: "0.95rem",
+              }}
+            >
+              Memuat riwayat percakapan...
+            </div>
+          ) : !hasMessages ? (
             <div
               style={{
                 flex: 1,
@@ -3639,7 +3745,7 @@ export default function ChatPage() {
                 fileUploadError={fileUploadError}
               />
             </div>
-          )}
+          ) : null}
 
           {activeConv?.messages.map((msg) => (
             <div

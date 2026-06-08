@@ -90,8 +90,13 @@ export default function SignIn() {
         if (!persistedToken) {
           showToast('success', 'Login berhasil, memproses sesi...');
         }
-        showToast('success', 'Login berhasil! Mengarahkan ke halaman chatbot...');
-        setTimeout(() => router.replace('/chat'), 1200);
+
+        const isAdmin = role === 'superadmin' || role === 'admin';
+        const targetPath = isAdmin ? '/admin' : '/chat';
+        const pageLabel = isAdmin ? 'dashboard admin' : 'chatbot';
+
+        showToast('success', `Login berhasil! Mengarahkan ke halaman ${pageLabel}...`);
+        setTimeout(() => router.replace(targetPath), 1200);
         return;
       }
 

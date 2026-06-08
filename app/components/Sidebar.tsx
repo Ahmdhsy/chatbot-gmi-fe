@@ -103,7 +103,7 @@ export default function Sidebar({
             />
           </div>
           <div>
-            <p style={{ margin: 0, fontSize: "0.95rem", fontWeight: 700, color: "#e7e5df" }}>Telkom AI</p>
+            <p style={{ margin: 0, fontSize: "0.95rem", fontWeight: 700, color: "#e7e5df" }}>Telkomsel AI</p>
             <p style={{ margin: "2px 0 0", fontSize: "0.7rem", color: "#8f8f8a" }}>Assistant</p>
           </div>
           </div>
