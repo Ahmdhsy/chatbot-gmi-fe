@@ -31,7 +31,8 @@ interface SidebarProps {
   onSelectConv: (conv: Conversation) => Promise<void>;
   onDeleteConv: (id: string) => void;
   onNewChat: () => void;
-  userEmail: string;
+  userName: string;
+  userRole: string;
   onLogout: () => void;
 }
 
@@ -43,13 +44,14 @@ export default function Sidebar({
   onSelectConv,
   onDeleteConv,
   onNewChat,
-  userEmail,
+  userName,
+  userRole,
   onLogout,
 }: SidebarProps) {
   const [expandedSection, setExpandedSection] = useState<"history" | "settings" | null>("history");
 
-  function getInitial(email: string) {
-    return email ? email[0].toUpperCase() : "U";
+  function getInitial(name: string) {
+    return name ? name[0].toUpperCase() : "U";
   }
 
   return (
@@ -408,7 +410,7 @@ export default function Sidebar({
                 flexShrink: 0,
               }}
             >
-              {getInitial(userEmail)}
+              {getInitial(userName)}
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <p
@@ -422,10 +424,16 @@ export default function Sidebar({
                   whiteSpace: "nowrap",
                 }}
               >
-                {userEmail}
+                {userName}
               </p>
               <p style={{ margin: "2px 0 0", color: "#8f8f8a", fontSize: "0.75rem" }}>
-                Pengguna
+                {userRole === "superadmin"
+                  ? "Super Admin"
+                  : userRole === "admin"
+                  ? "Admin"
+                  : userRole === "user"
+                  ? "Karyawan"
+                  : userRole.charAt(0).toUpperCase() + userRole.slice(1)}
               </p>
             </div>
           </div>

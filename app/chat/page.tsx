@@ -2336,6 +2336,7 @@ export default function ChatPage() {
   const [token, setToken] = useState<string>("");
   const [userEmail, setUserEmail] = useState<string>("");
   const [userName, setUserName] = useState<string>("");
+  const [userRole, setUserRole] = useState<string>("");
   const [sessionGreeting] = useState<string>(() => getTimeGreeting(new Date()));
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string>("");
@@ -2439,15 +2440,18 @@ export default function ChatPage() {
           headers: { Authorization: `Bearer ${t}` },
         });
         if (!res.ok) return;
-        const me = await res.json() as { username?: string | null; email?: string | null };
+        const me = await res.json() as { username?: string | null; email?: string | null; role?: string | null };
         const resolvedName = (me.username ?? "").trim();
         if (resolvedName) {
           setUserName(resolvedName);
-          return;
+        } else {
+          const emailForFallback = (me.email ?? resolvedEmail).trim();
+          const localPart = emailForFallback.split("@")[0]?.trim() ?? "";
+          if (localPart) setUserName(localPart);
         }
-        const emailForFallback = (me.email ?? resolvedEmail).trim();
-        const localPart = emailForFallback.split("@")[0]?.trim() ?? "";
-        if (localPart) setUserName(localPart);
+        if (me.role) {
+          setUserRole(me.role);
+        }
       } catch {
         // ignore; UI will use fallback
       }
@@ -2604,6 +2608,10 @@ export default function ChatPage() {
       }
       if (cancelled) return;
       setUserEmail(resolvedEmail);
+      const savedRole = getRoleFromCookie();
+      if (savedRole) {
+        setUserRole(savedRole);
+      }
 
       fetchCurrentUser(tokenFromCookie, resolvedEmail);
       bootstrapHistory(tokenFromCookie, resolvedEmail);
@@ -3365,7 +3373,8 @@ export default function ChatPage() {
         onSelectConv={handleSelectConv}
         onDeleteConv={handleDeleteConv}
         onNewChat={handleNewChat}
-        userEmail={userEmail}
+        userName={userName || userEmail.split("@")[0] || "User"}
+        userRole={userRole || "Karyawan"}
         onLogout={handleLogout}
       />
 
