@@ -17,6 +17,9 @@ import rehypeRaw from "rehype-raw";
 import RadioButtonCheckedIcon from "@mui/icons-material/RadioButtonChecked";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
+import dynamic from "next/dynamic";
+
+const ReactApexChart = dynamic(() => import("react-apexcharts"), { ssr: false });
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8001/v1";
 
@@ -757,723 +760,196 @@ interface ChartData {
   smooth?: boolean;
   lineWidth?: number;
   pointSize?: number;
-  [key: string]: unknown; // Allow additional properties
+  [key: string]: unknown;
 }
 
 function toChartLabel(value: unknown, fallback = ""): string {
   if (value === null || value === undefined) return fallback;
   if (typeof value === "string") return value.trim() || fallback;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
-
   if (typeof value === "object") {
     const obj = value as Record<string, unknown>;
-    const preferredKeys = [
-      "label", "name", "month", "period", "region", "area", "metric", "category", "x", "id",
-    ];
-    for (const key of preferredKeys) {
-      const candidate = obj[key];
-      if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
-      if (typeof candidate === "number" || typeof candidate === "boolean") return String(candidate);
+    const preferred = ["label", "name", "month", "period", "region", "area", "metric", "category", "x", "id"];
+    for (const key of preferred) {
+      const c = obj[key];
+      if (typeof c === "string" && c.trim()) return c.trim();
+      if (typeof c === "number" || typeof c === "boolean") return String(c);
     }
-    const firstPrimitive = Object.values(obj).find(
-      (v) => typeof v === "string" || typeof v === "number" || typeof v === "boolean"
-    );
-    if (firstPrimitive !== undefined) return String(firstPrimitive);
+    const first = Object.values(obj).find((v) => typeof v === "string" || typeof v === "number" || typeof v === "boolean");
+    if (first !== undefined) return String(first);
   }
-
   return fallback || "N/A";
-}
-
-function trimLabel(label: string, max = 16) {
-  if (label.length <= max) return label;
-  return `${label.slice(0, max)}...`;
 }
 
 function inferYField(data: Array<Record<string, unknown>>) {
   if (!data || data.length === 0) return "value";
-  const preferred = ["value", "y", "nps", "score", "amount", "total"];
+  const preferred = ["value_num", "value", "y", "nps", "score", "amount", "total"];
   const sample = data[0];
   for (const key of preferred) {
     if (typeof sample[key] === "number" || !Number.isNaN(Number(sample[key]))) return key;
   }
-  const numericKey = Object.keys(sample).find((key) => typeof sample[key] === "number" || !Number.isNaN(Number(sample[key])));
-  return numericKey || "value";
+  return Object.keys(sample).find((k) => typeof sample[k] === "number") || "value";
 }
 
 function inferXField(data: Array<Record<string, unknown>>, yField: string) {
   if (!data || data.length === 0) return "label";
-  const preferred = ["label", "month", "period", "time", "date", "region", "area", "name", "category", "x"];
+  const preferred = ["time_value", "label", "month", "period", "time", "date", "region", "area", "name", "category", "x"];
   const sample = data[0];
   for (const key of preferred) {
     if (key !== yField && key in sample) return key;
   }
-  const stringKey = Object.keys(sample).find((key) => key !== yField && typeof sample[key] !== "number");
-  return stringKey || "label";
+  return Object.keys(sample).find((k) => k !== yField && typeof sample[k] !== "number") || "label";
 }
 
 function inferSeriesField(data: Array<Record<string, unknown>>, xField: string, yField: string) {
   if (!data || data.length === 0) return undefined;
-  const preferred = ["series", "metric", "type", "legend", "group", "dataset", "line", "tipe"];
+  const preferred = ["metric_label", "series", "metric", "type", "legend", "group", "dataset", "line", "tipe"];
   const sample = data[0];
   const keys = Object.keys(sample);
-
-  const preferredByLower = keys.find((key) => {
-    const lower = key.toLowerCase();
-    return preferred.includes(lower) && key !== xField && key !== yField;
-  });
-  if (preferredByLower) {
-    const uniq = new Set(data.map((row) => toChartLabel(row[preferredByLower])));
-    if (uniq.size > 1 && uniq.size < data.length) return preferredByLower;
-  }
-
-  for (const key of preferred) {
-    if (key in sample && key !== xField && key !== yField) {
-      const uniq = new Set(data.map((row) => toChartLabel(row[key])));
-      if (uniq.size > 1 && uniq.size < data.length) return key;
-    }
-  }
-
-  const candidates = keys.filter((key) => key !== xField && key !== yField);
-  for (const key of candidates) {
+  for (const key of [...preferred, ...keys]) {
+    if (key === xField || key === yField) continue;
+    if (!(key in sample)) continue;
     const uniq = new Set(data.map((row) => toChartLabel(row[key])));
-    if (uniq.size > 1 && uniq.size < data.length) return key;
+    if (uniq.size > 1 && uniq.size <= 30 && uniq.size < data.length) return key;
   }
-
   return undefined;
 }
 
-function buildLegendItems(
-  chart: ChartData,
-  colors: string[],
-  fields?: { xField: string; seriesField?: string }
-) {
-  const xField = fields?.xField || chart.xField || "label";
-  const seriesField = fields?.seriesField || chart.seriesField;
-  const items: Array<{ label: string; color: string }> = [];
-
-  if (chart.type === "pie") {
-    const labels = Array.from(
-      new Set(
-        chart.data.map((row, idx) => toChartLabel(row[xField], `Item ${idx + 1}`))
-      )
-    );
-    return labels.map((label, idx) => ({
-      label: trimLabel(label, 22),
-      color: colors[idx % colors.length],
-    }));
-  }
-
-  if (seriesField) {
-    const seriesNames = Array.from(
-      new Set(
-        chart.data.map((row, idx) => toChartLabel(row[seriesField], `Series ${idx + 1}`))
-      )
-    );
-    return seriesNames.map((label, idx) => ({
-      label: trimLabel(label, 22),
-      color: colors[idx % colors.length],
-    }));
-  }
-
-  const singleLabel = trimLabel(chart.title || "Series", 26);
-  items.push({ label: singleLabel, color: colors[0] });
-  return items;
-}
-
 function Chart({ chart }: { chart: ChartData }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const hoverColumnsRef = useRef<Array<{
-    x: number;
-    xLabel: string;
-    rows: Array<{ series: string; value: number; color: string }>;
-  }>>([]);
-  const [tooltip, setTooltip] = useState<{
-    x: number;
-    y: number;
-    xLabel: string;
-    rows: Array<{ series: string; value: number; color: string }>;
-  } | null>(null);
-
   const yField = chart.yField || inferYField(chart.data);
   const xField = chart.xField || inferXField(chart.data, yField);
   const seriesField = chart.seriesField || inferSeriesField(chart.data, xField, yField);
-  const chartType = String(chart.type || "").toLowerCase();
-  const isLineChart = chartType.includes("line");
-  const isBarChart = chartType.includes("bar") || chartType.includes("column");
-  const isPieChart = chartType.includes("pie");
-  const isTooltipChart = isLineChart || isBarChart;
-  const colors = chart.colorScheme || ['#5B8FF9', '#5AD8A6', '#F6BD16', '#E86452', '#6DC8EC'];
-  const legendItems = buildLegendItems(chart, colors, { xField, seriesField });
-  const legendSignature = legendItems.map((item) => `${item.label}:${item.color}`).join("|");
+  const chartType = String(chart.type || "bar").toLowerCase();
+  const isPie = chartType.includes("pie");
+  const isLine = chartType.includes("line");
 
-  useEffect(() => {
-    if (!chart || !chart.data || chart.data.length === 0) return;
+  const COLORS = chart.colorScheme || [
+    "#5B8FF9", "#5AD8A6", "#F6BD16", "#E86452",
+    "#6DC8EC", "#945FB9", "#FF9845", "#5D7092",
+  ];
 
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const parent = canvas.parentElement;
-    if (!parent) return;
+  // Unique X values in source order
+  const uniqueX = Array.from(
+    new Set(chart.data.map((row, i) => toChartLabel(row[xField], `#${i + 1}`)))
+  );
 
-    const drawChart = () => {
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      try {
+  // Build ApexCharts series
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let series: any[];
+  if (isPie) {
+    series = chart.data.map((row) => Number(row[yField]) || 0);
+  } else if (seriesField) {
+    const grouped: Record<string, Record<string, number | null>> = {};
+    chart.data.forEach((row) => {
+      const s = toChartLabel(row[seriesField!], "Series");
+      const x = toChartLabel(row[xField], "");
+      if (!grouped[s]) grouped[s] = {};
+      grouped[s][x] = Number(row[yField]) || 0;
+    });
+    series = Object.entries(grouped).map(([name, vals]) => ({
+      name,
+      data: uniqueX.map((x) => vals[x] ?? null),
+    }));
+  } else {
+    series = [{
+      name: chart.title || "Data",
+      data: chart.data.map((row) => Number(row[yField]) || 0),
+    }];
+  }
 
-      const cssWidth = Math.max(parent.clientWidth, 320);
-      const cssHeight = chart.seriesField ? 420 : 360;
-      const dpr = Math.max(window.devicePixelRatio || 1, 1);
+  const options = {
+    chart: {
+      type: (isPie ? "donut" : isLine ? "line" : "bar") as "donut" | "line" | "bar",
+      background: "transparent",
+      toolbar: { show: true },
+      animations: { enabled: true, speed: 350 },
+      fontFamily: "Inter, Tahoma, sans-serif",
+    },
+    title: {
+      text: chart.title,
+      align: "center" as const,
+      style: { fontSize: "14px", fontWeight: "600", color: "#e5e7eb" },
+      margin: 12,
+    },
+    colors: COLORS,
+    theme: { mode: "dark" as const },
+    tooltip: {
+      theme: "dark",
+      shared: true,
+      intersect: false,
+      y: {
+        formatter: (val: number) =>
+          val == null ? "–" : val.toLocaleString("id-ID", { maximumFractionDigits: 2 }),
+      },
+    },
+    legend: {
+      position: "bottom" as const,
+      horizontalAlign: "center" as const,
+      labels: { colors: "#9ca3af" },
+      itemMargin: { horizontal: 8, vertical: 4 },
+    },
+    xaxis: isPie ? {} : {
+      categories: uniqueX,
+      labels: {
+        rotate: -35,
+        style: { colors: "#9ca3af", fontSize: "11px" },
+        formatter: (val: string) => val?.length > 16 ? val.slice(0, 16) + "…" : val,
+      },
+      axisBorder: { color: "#374151" },
+      axisTicks: { color: "#374151" },
+    },
+    yaxis: isPie ? {} : {
+      labels: {
+        style: { colors: "#9ca3af", fontSize: "11px" },
+        formatter: (val: number) =>
+          val.toLocaleString("id-ID", { maximumFractionDigits: 1 }),
+      },
+    },
+    plotOptions: {
+      bar: { borderRadius: 4, columnWidth: "60%" },
+      pie: { donut: { size: "55%", labels: { show: true, total: { show: true, color: "#9ca3af" } } } },
+    },
+    stroke: isLine
+      ? { curve: (chart.smooth !== false ? "smooth" : "straight") as "smooth" | "straight", width: Number(chart.lineWidth) || 2.5 }
+      : { show: false },
+    markers: isLine ? { size: 4, hover: { size: 6 } } : {},
+    grid: {
+      borderColor: "#374151",
+      strokeDashArray: 4,
+      xaxis: { lines: { show: false } },
+    },
+    dataLabels: { enabled: false },
+  };
 
-      canvas.style.width = `${cssWidth}px`;
-      canvas.style.height = `${cssHeight}px`;
-      canvas.width = Math.round(cssWidth * dpr);
-      canvas.height = Math.round(cssHeight * dpr);
-
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, cssWidth, cssHeight);
-      ctx.imageSmoothingEnabled = true;
-
-      const padding = {
-        top: 54,
-        right: 24,
-        bottom: isPieChart ? 28 : 78,
-        left: 56,
-      };
-      const chartWidth = cssWidth - padding.left - padding.right;
-      const chartHeight = cssHeight - padding.top - padding.bottom;
-      if (chartWidth <= 0 || chartHeight <= 0) return;
-
-      // Get chart configuration
-      const hasMultipleSeries = !!(seriesField && chart.data.length > 0);
-      const rowCount = chart.data.length;
-      const xLabelStepBase = Math.max(1, Math.ceil(rowCount / 12));
-
-      // ========== GROUP DATA BY SERIES ==========
-      const groupedData: Record<string, typeof chart.data> = {};
-      if (hasMultipleSeries) {
-        chart.data.forEach((item) => {
-          const key = toChartLabel(item[seriesField as string], "Series");
-          if (!groupedData[key]) groupedData[key] = [];
-          groupedData[key].push(item);
-        });
-      } else {
-        groupedData.default = chart.data;
-      }
-
-      // Keep source order so labels don't jump alphabetically.
-      const uniqueXValues = Array.from(
-        new Set(chart.data.map((item, index) => toChartLabel(item[xField], `#${index + 1}`)))
-      );
-
-      // ========== CALCULATE MAX VALUE ==========
-      const maxRawValue = Math.max(...chart.data.map((d) => Number(d[yField]) || 0));
-      const maxValue = Math.max(maxRawValue * 1.12, 1);
-
-      // ========== DRAW TITLE ==========
-      ctx.fillStyle = '#1a1a2e';
-      ctx.font = "bold 16px Inter, Tahoma, Geneva, Verdana, sans-serif";
-      ctx.textAlign = 'center';
-      ctx.fillText(chart.title, cssWidth / 2, 28);
-
-      // Draw Y-axis
-      ctx.strokeStyle = '#e5e7eb';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(padding.left, padding.top);
-      ctx.lineTo(padding.left, cssHeight - padding.bottom);
-      ctx.stroke();
-
-      // Draw X-axis
-      ctx.beginPath();
-      ctx.moveTo(padding.left, cssHeight - padding.bottom);
-      ctx.lineTo(cssWidth - padding.right, cssHeight - padding.bottom);
-      ctx.stroke();
-
-      // Draw chart based on type
-      if (isBarChart) {
-        hoverColumnsRef.current = [];
-        const barWidth = chartWidth / chart.data.length * 0.6;
-        const gap = chartWidth / chart.data.length;
-        const xLabelStep = Math.max(1, Math.ceil(chart.data.length / 12));
-        const showValueLabels = rowCount <= 24;
-        const hoverMap = new Map<string, {
-          x: number;
-          xLabel: string;
-          rows: Array<{ series: string; value: number; color: string }>;
-        }>();
-
-        chart.data.forEach((item: Record<string, unknown>, index: number) => {
-          const value = Number(item[yField]) || 0;
-          const barHeight = (value / maxValue) * chartHeight;
-          const x = padding.left + gap * index + (gap - barWidth) / 2;
-          const y = cssHeight - padding.bottom - barHeight;
-
-          // Draw bar
-          ctx.fillStyle = colors[index % colors.length];
-          ctx.fillRect(x, y, barWidth, barHeight);
-
-          if (showValueLabels) {
-            // Draw value on top
-            ctx.fillStyle = '#1a1a2e';
-            ctx.font = "11px Inter, Tahoma, Geneva, Verdana, sans-serif";
-            ctx.textAlign = 'center';
-            ctx.fillText(value.toString(), x + barWidth / 2, y - 5);
-          }
-
-          if (index % xLabelStep === 0 || index === chart.data.length - 1) {
-            // Draw X-axis label
-            ctx.save();
-            ctx.translate(x + barWidth / 2, cssHeight - padding.bottom + 15);
-            ctx.rotate(-Math.PI / 5);
-            ctx.textAlign = 'right';
-            ctx.fillStyle = '#6b7280';
-            ctx.font = "10px Inter, Tahoma, Geneva, Verdana, sans-serif";
-            const label = toChartLabel(item[xField], `#${index + 1}`);
-            ctx.fillText(trimLabel(label, 14), 0, 0);
-            ctx.restore();
-          }
-
-          const xLabel = toChartLabel(item[xField], `#${index + 1}`);
-          const seriesLabel = seriesField
-            ? toChartLabel(item[seriesField], "Series")
-            : (legendItems[0]?.label || "Series");
-          const existing = hoverMap.get(`${xLabel}`);
-          if (!existing) {
-            hoverMap.set(`${xLabel}`, {
-              x: x + barWidth / 2,
-              xLabel,
-              rows: [{ series: seriesLabel, value, color: colors[index % colors.length] }],
-            });
-          } else {
-            existing.rows.push({ series: seriesLabel, value, color: colors[index % colors.length] });
-          }
-        });
-        hoverColumnsRef.current = Array.from(hoverMap.values()).sort((a, b) => a.x - b.x);
-      } else if (isLineChart) {
-        hoverColumnsRef.current = [];
-        if (hasMultipleSeries) {
-          // ========== MULTI-SERIES LINE CHART ==========
-          const seriesNames = Object.keys(groupedData);
-          const xLabelStep = Math.max(xLabelStepBase, Math.ceil(uniqueXValues.length / 12));
-          const showPointLabels = uniqueXValues.length <= 18 && seriesNames.length <= 4;
-          const hoverMap = new Map<string, {
-            x: number;
-            xLabel: string;
-            rows: Array<{ series: string; value: number; color: string }>;
-          }>();
-
-          seriesNames.forEach((seriesName, seriesIndex) => {
-            const seriesData = groupedData[seriesName];
-            const color = colors[seriesIndex % colors.length];
-
-            // Sort and create points for this series
-            const points = seriesData
-              .sort((a, b) => {
-                const aIndex = uniqueXValues.indexOf(toChartLabel(a[xField]));
-                const bIndex = uniqueXValues.indexOf(toChartLabel(b[xField]));
-                return aIndex - bIndex;
-              })
-              .map((item) => {
-                const xLabel = toChartLabel(item[xField]);
-                const xIndex = uniqueXValues.indexOf(xLabel);
-                const x = padding.left + (xIndex / (uniqueXValues.length - 1 || 1)) * chartWidth;
-                const value = Number(item[yField]) || 0;
-                const y = cssHeight - padding.bottom - (value / maxValue) * chartHeight;
-                return { x, y, value, label: xLabel };
-              });
-
-            // Draw line
-            ctx.strokeStyle = color;
-            ctx.lineWidth = chart.lineWidth || 2.5;
-            ctx.beginPath();
-
-            const smooth = chart.smooth === true;
-            if (smooth && points.length > 1) {
-              // Smooth curve (bezier)
-              ctx.moveTo(points[0].x, points[0].y);
-              for (let i = 0; i < points.length - 1; i++) {
-                const p0 = points[Math.max(0, i - 1)];
-                const p1 = points[i];
-                const p2 = points[i + 1];
-                const p3 = points[Math.min(points.length - 1, i + 2)];
-
-                const cp1x = p1.x + (p2.x - p0.x) / 6;
-                const cp1y = p1.y + (p2.y - p0.y) / 6;
-                const cp2x = p2.x - (p3.x - p1.x) / 6;
-                const cp2y = p2.y - (p3.y - p1.y) / 6;
-
-                ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
-              }
-            } else {
-              // Straight lines
-              points.forEach((point, index) => {
-                if (index === 0) ctx.moveTo(point.x, point.y);
-                else ctx.lineTo(point.x, point.y);
-              });
-            }
-            ctx.stroke();
-
-            // Draw points
-            ctx.fillStyle = color;
-            const pointSize = chart.pointSize || 4;
-            const pointLabelStep = Math.max(1, Math.ceil(points.length / 10));
-
-            points.forEach((point, idx) => {
-              ctx.beginPath();
-              ctx.arc(point.x, point.y, pointSize, 0, Math.PI * 2);
-              ctx.fill();
-
-              if (showPointLabels && (idx % pointLabelStep === 0 || idx === points.length - 1)) {
-                // Draw value label
-                ctx.fillStyle = '#1a1a2e';
-                ctx.font = "10px Inter, Tahoma, Geneva, Verdana, sans-serif";
-                ctx.textAlign = 'center';
-                ctx.fillText(point.value.toFixed(1), point.x, point.y - pointSize - 4);
-                ctx.fillStyle = color; // Reset for next point
-              }
-
-              const existing = hoverMap.get(point.label);
-              if (!existing) {
-                hoverMap.set(point.label, {
-                  x: point.x,
-                  xLabel: point.label,
-                  rows: [{ series: seriesName, value: point.value, color }],
-                });
-              } else {
-                existing.rows.push({ series: seriesName, value: point.value, color });
-              }
-            });
-          });
-          hoverColumnsRef.current = Array.from(hoverMap.values()).sort((a, b) => a.x - b.x);
-
-          // ========== DRAW X-AXIS LABELS ==========
-          uniqueXValues.forEach((xValue, index) => {
-            if (index % xLabelStep !== 0 && index !== uniqueXValues.length - 1) return;
-            const x = padding.left + (index / (uniqueXValues.length - 1 || 1)) * chartWidth;
-            ctx.save();
-            ctx.translate(x, cssHeight - padding.bottom + 16);
-            ctx.rotate(-Math.PI / 5);
-            ctx.textAlign = 'right';
-            ctx.fillStyle = '#6b7280';
-            ctx.font = "10px Inter, Tahoma, Geneva, Verdana, sans-serif";
-            ctx.fillText(trimLabel(String(xValue), 14), 0, 0);
-            ctx.restore();
-          });
-
-        } else {
-          // ========== SINGLE SERIES LINE CHART ==========
-          const gap = chartWidth / (chart.data.length - 1 || 1);
-
-          // Get all points coordinates
-          const points = chart.data.map((item: Record<string, unknown>, index: number) => {
-            const value = Number(item[yField]) || 0;
-            return {
-              x: padding.left + gap * index,
-              y: cssHeight - padding.bottom - (value / maxValue) * chartHeight,
-              value,
-            };
-          });
-
-          // Draw line
-          ctx.strokeStyle = colors[0];
-          ctx.lineWidth = (chart as Record<string, unknown>).lineWidth as number || 3;
-          ctx.beginPath();
-
-          // Check if smooth line is requested
-          const smooth = (chart as Record<string, unknown>).smooth === true;
-
-          if (smooth && points.length > 1) {
-            // Draw smooth curve using bezier curves
-            ctx.moveTo(points[0].x, points[0].y);
-
-            for (let i = 0; i < points.length - 1; i++) {
-              const p0 = points[Math.max(0, i - 1)];
-              const p1 = points[i];
-              const p2 = points[i + 1];
-              const p3 = points[Math.min(points.length - 1, i + 2)];
-
-              // Calculate control points for smooth curve
-              const cp1x = p1.x + (p2.x - p0.x) / 6;
-              const cp1y = p1.y + (p2.y - p0.y) / 6;
-              const cp2x = p2.x - (p3.x - p1.x) / 6;
-              const cp2y = p2.y - (p3.y - p1.y) / 6;
-
-              ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
-            }
-          } else {
-            // Draw straight lines
-            points.forEach((point, index) => {
-              if (index === 0) {
-                ctx.moveTo(point.x, point.y);
-              } else {
-                ctx.lineTo(point.x, point.y);
-              }
-            });
-          }
-
-          ctx.stroke();
-          const xLabelStep = Math.max(1, Math.ceil(chart.data.length / 12));
-          const pointLabelStep = Math.max(1, Math.ceil(points.length / 10));
-          const showPointLabels = chart.data.length <= 24;
-          const singleSeriesName = trimLabel(chart.title || "Series", 26);
-          hoverColumnsRef.current = [];
-
-          // Draw points
-          const pointSize = (chart as Record<string, unknown>).pointSize as number || 5;
-          points.forEach((point, index) => {
-            ctx.fillStyle = colors[0];
-            ctx.beginPath();
-            ctx.arc(point.x, point.y, pointSize, 0, Math.PI * 2);
-            ctx.fill();
-
-            if (showPointLabels && (index % pointLabelStep === 0 || index === points.length - 1)) {
-              // Draw value
-              ctx.fillStyle = '#1a1a2e';
-              ctx.font = "11px Inter, Tahoma, Geneva, Verdana, sans-serif";
-              ctx.textAlign = 'center';
-              ctx.fillText(point.value.toString(), point.x, point.y - pointSize - 5);
-            }
-
-            if (index % xLabelStep === 0 || index === points.length - 1) {
-              // Draw X-axis label
-              ctx.save();
-              ctx.translate(point.x, cssHeight - padding.bottom + 15);
-              ctx.rotate(-Math.PI / 5);
-              ctx.textAlign = 'right';
-              ctx.fillStyle = '#6b7280';
-              ctx.font = "10px Inter, Tahoma, Geneva, Verdana, sans-serif";
-              const item = chart.data[index];
-              const label = toChartLabel(item[xField], `#${index + 1}`);
-              ctx.fillText(trimLabel(label, 14), 0, 0);
-              ctx.restore();
-            }
-
-            const item = chart.data[index];
-            const pointLabel = toChartLabel(item[xField], `#${index + 1}`);
-            hoverColumnsRef.current.push({
-              x: point.x,
-              xLabel: pointLabel,
-              rows: [{ series: singleSeriesName, value: point.value, color: colors[0] }],
-            });
-          });
-        }
-      } else if (isPieChart) {
-        const total = chart.data.reduce((sum: number, item: Record<string, unknown>) => {
-          return sum + (Number(item[yField]) || 0);
-        }, 0);
-
-        let currentAngle = -Math.PI / 2;
-        const centerX = cssWidth / 2;
-        const centerY = cssHeight / 2 + 10;
-        const radius = Math.min(chartWidth, chartHeight) / 2.5;
-
-        chart.data.forEach((item: Record<string, unknown>, index: number) => {
-          const value = Number(item[yField]) || 0;
-          const sliceAngle = (value / total) * Math.PI * 2;
-
-          // Draw slice
-          ctx.fillStyle = colors[index % colors.length];
-          ctx.beginPath();
-          ctx.moveTo(centerX, centerY);
-          ctx.arc(centerX, centerY, radius, currentAngle, currentAngle + sliceAngle);
-          ctx.closePath();
-          ctx.fill();
-
-          // Draw label
-          const labelAngle = currentAngle + sliceAngle / 2;
-          const labelX = centerX + Math.cos(labelAngle) * (radius * 0.7);
-          const labelY = centerY + Math.sin(labelAngle) * (radius * 0.7);
-
-          const percentage = ((value / total) * 100).toFixed(1);
-          ctx.fillStyle = '#fff';
-          ctx.font = "bold 12px Inter, Tahoma, Geneva, Verdana, sans-serif";
-          ctx.textAlign = 'center';
-          ctx.fillText(`${percentage}%`, labelX, labelY);
-
-          currentAngle += sliceAngle;
-        });
-
-      } else {
-        // Unsupported chart type
-        ctx.fillStyle = '#6b7280';
-        ctx.font = "14px Inter, Tahoma, Geneva, Verdana, sans-serif";
-        ctx.textAlign = 'center';
-        ctx.fillText(`Chart type "${chart.type}" not supported`, cssWidth / 2, cssHeight / 2);
-      }
-
-      // Draw Y-axis labels
-      ctx.fillStyle = '#6b7280';
-      ctx.font = "10px Inter, Tahoma, Geneva, Verdana, sans-serif";
-      ctx.textAlign = 'right';
-      for (let i = 0; i <= 5; i++) {
-        const value = (maxValue / 5) * i;
-        const y = cssHeight - padding.bottom - (value / maxValue) * chartHeight;
-        ctx.fillText(Math.round(value).toString(), padding.left - 10, y + 3);
-      }
-      } catch (error) {
-        console.error("Chart render error:", error);
-        const fallbackWidth = Math.max(parent.clientWidth, 320);
-        const fallbackHeight = chart.seriesField ? 420 : 360;
-        canvas.style.width = `${fallbackWidth}px`;
-        canvas.style.height = `${fallbackHeight}px`;
-        canvas.width = fallbackWidth;
-        canvas.height = fallbackHeight;
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.clearRect(0, 0, fallbackWidth, fallbackHeight);
-        ctx.fillStyle = "#6b7280";
-        ctx.font = "14px Inter, Tahoma, Geneva, Verdana, sans-serif";
-        ctx.textAlign = "center";
-        ctx.fillText("Chart gagal dirender", fallbackWidth / 2, fallbackHeight / 2);
-      }
-    };
-
-    const rafId = requestAnimationFrame(drawChart);
-
-    const onResize = () => drawChart();
-    window.addEventListener('resize', onResize);
-
-    const onMouseMove = (e: MouseEvent) => {
-      if (!isTooltipChart) {
-        setTooltip(null);
-        return;
-      }
-      const rect = canvas.getBoundingClientRect();
-      const mx = e.clientX - rect.left;
-      const my = e.clientY - rect.top;
-      const cols = hoverColumnsRef.current;
-      if (!cols || cols.length === 0) {
-        setTooltip(null);
-        return;
-      }
-
-      let nearest = cols[0];
-      let minDist = Math.abs(mx - nearest.x);
-      for (let i = 1; i < cols.length; i++) {
-        const d = Math.abs(mx - cols[i].x);
-        if (d < minDist) {
-          minDist = d;
-          nearest = cols[i];
-        }
-      }
-
-      if (minDist > 40) {
-        setTooltip(null);
-        return;
-      }
-
-      const tooltipWidth = 240;
-      const tooltipHeight = 72 + nearest.rows.length * 22;
-      const xPos = Math.max(8, Math.min(mx + 12, rect.width - tooltipWidth - 8));
-      const yPos = Math.max(8, Math.min(my + 14, rect.height - tooltipHeight - 8));
-
-      setTooltip({
-        x: xPos,
-        y: yPos,
-        xLabel: nearest.xLabel,
-        rows: nearest.rows.sort((a, b) => b.value - a.value),
-      });
-    };
-
-    const onMouseLeave = () => setTooltip(null);
-    canvas.addEventListener("mousemove", onMouseMove);
-    canvas.addEventListener("mouseleave", onMouseLeave);
-
-    return () => {
-      cancelAnimationFrame(rafId);
-      window.removeEventListener('resize', onResize);
-      canvas.removeEventListener("mousemove", onMouseMove);
-      canvas.removeEventListener("mouseleave", onMouseLeave);
-    };
-
-  }, [chart, xField, yField, seriesField, legendSignature, isLineChart, isBarChart, isPieChart, isTooltipChart]);
+  if (!chart.data || chart.data.length === 0) {
+    return (
+      <div style={{ marginTop: 12, borderRadius: 12, background: "#1f2937", border: "1px solid #374151", padding: "24px", textAlign: "center" as const, color: "#6b7280" }}>
+        Tidak ada data untuk ditampilkan
+      </div>
+    );
+  }
 
   return (
-    <div style={{ marginTop: 12, borderRadius: 12, overflow: 'hidden', background: '#262626', boxShadow: '0 6px 18px rgba(0,0,0,0.3)', border: "1px solid #3a3a3a", position: "relative" }}>
-      <canvas
-        ref={canvasRef}
-        style={{ width: '100%', display: 'block' }}
+    <div style={{
+      marginTop: 12,
+      borderRadius: 12,
+      overflow: "hidden",
+      background: "#1a2232",
+      boxShadow: "0 6px 24px rgba(0,0,0,0.4)",
+      border: "1px solid #2d3748",
+      padding: "4px 0 0",
+    }}>
+      <ReactApexChart
+        options={options}
+        series={series}
+        type={isPie ? "donut" : isLine ? "line" : "bar"}
+        height={isPie ? 380 : seriesField ? 440 : 360}
+        width="100%"
       />
-      {tooltip && (
-        <div
-          style={{
-            position: "absolute",
-            left: tooltip.x,
-            top: tooltip.y,
-            minWidth: 180,
-            maxWidth: 240,
-            background: "rgba(25,25,25,0.94)",
-            color: "#ece7db",
-            borderRadius: 10,
-            padding: "8px 10px",
-            boxShadow: "0 10px 24px rgba(0,0,0,0.24)",
-            fontSize: "0.76rem",
-            lineHeight: 1.35,
-            zIndex: 5,
-            pointerEvents: "none",
-          }}
-        >
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>{tooltip.xLabel}</div>
-          {tooltip.rows.map((row, idx) => (
-            <div key={`${row.series}-${idx}`} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
-              <span style={{ width: 8, height: 8, borderRadius: "50%", background: row.color, flexShrink: 0 }} />
-              <span style={{ flex: 1 }}>{row.series}</span>
-              <span style={{ fontWeight: 700 }}>{row.value.toFixed(2)}</span>
-            </div>
-          ))}
-        </div>
-      )}
-      {legendItems.length > 0 && (
-        <div
-          style={{
-            borderTop: "1px solid #383838",
-            padding: "10px 12px",
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 8,
-            alignItems: "center",
-            maxHeight: 96,
-            overflowY: "auto",
-            background: "#232323",
-          }}
-        >
-          {legendItems.map((item, idx) => (
-            <div
-              key={`${item.label}-${idx}`}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "4px 10px",
-                border: "1px solid #47413a",
-                borderRadius: 999,
-                background: "#2b2825",
-                fontSize: "0.76rem",
-                color: "#d7d1c3",
-                lineHeight: 1.2,
-                maxWidth: "100%",
-              }}
-              title={item.label}
-            >
-              <span
-                style={{
-                  width: 10,
-                  height: 10,
-                  borderRadius: "50%",
-                  background: item.color,
-                  flexShrink: 0,
-                }}
-              />
-              <span style={{ whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>
-                {item.label}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
 
-/* ─────────────────────────── Helpers ─────────────────────────── */
 function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
