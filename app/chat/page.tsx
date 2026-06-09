@@ -17,6 +17,7 @@ import rehypeRaw from "rehype-raw";
 import RadioButtonCheckedIcon from "@mui/icons-material/RadioButtonChecked";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
+import SuperAdminFab from "../components/SuperAdminFab";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8001/v1";
 
@@ -3363,6 +3364,9 @@ export default function ChatPage() {
 
       {/* Toast */}
       {toast && <Toast {...toast} onClose={() => setToast(null)} />}
+
+      {/* Floating Redirect Button for SuperAdmin */}
+      {userRole === "superadmin" && <SuperAdminFab mode="chat" />}
 
       {/* ══════════ SIDEBAR COMPONENT ══════════ */}
       <Sidebar

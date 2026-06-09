@@ -5,12 +5,14 @@ import { useRouter } from "next/navigation";
 import { SidebarProvider } from "@/components/Layouts/sidebar/sidebar-context";
 import { ThemeProvider } from "next-themes";
 import { getAccessTokenFromCookie, getRoleFromCookie, setRoleCookie } from "../lib/auth";
+import SuperAdminFab from "../components/SuperAdminFab";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8001/v1";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [authorized, setAuthorized] = useState(false);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
 
   useEffect(() => {
     const token = getAccessTokenFromCookie();
@@ -23,6 +25,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
     // If cookie role is already superadmin, allow immediately
     if (role === "superadmin") {
+      setIsSuperAdmin(true);
       setAuthorized(true);
       return;
     }
@@ -41,6 +44,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
           const freshRole = data?.role;
           if (freshRole === "superadmin") {
             setRoleCookie(freshRole, 7);
+            setIsSuperAdmin(true);
             setAuthorized(true);
           } else {
             router.replace("/chat");
@@ -63,7 +67,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <ThemeProvider forcedTheme="dark" attribute="class">
-      <SidebarProvider>{children}</SidebarProvider>
+      <SidebarProvider>
+        {children}
+        {isSuperAdmin && <SuperAdminFab mode="dashboard" />}
+      </SidebarProvider>
     </ThemeProvider>
   );
 }
