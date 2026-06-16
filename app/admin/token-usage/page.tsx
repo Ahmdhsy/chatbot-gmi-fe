@@ -47,13 +47,30 @@ interface UserUsage {
   email: string | null;
   role: string | null;
   total_tokens: number;
-  prompt_tokens: number;
-  completion_tokens: number;
   total_cost_usd: number | null;
   conversations: number;
-  llm_calls: number;
   last_activity: string | null;
 }
+
+interface PeriodData {
+  period: string;
+  period_start: string;
+  cost_visible: boolean;
+  total_conversations: number;
+  total_tokens: number;
+  active_users: number;
+  total_cost_usd: number | null;
+  users: UserUsage[];
+}
+
+type Period = "today" | "week" | "month" | "year";
+
+const PERIOD_LABELS: Record<Period, string> = {
+  today: "Hari Ini",
+  week: "Minggu Ini",
+  month: "Bulan Ini",
+  year: "Tahun Ini",
+};
 
 const fmt = (n: number | null | undefined) =>
   typeof n === "number" ? n.toLocaleString("id-ID") : "-";
@@ -64,8 +81,10 @@ const pct = (used: number, total: number) =>
 export default function TokenUsagePage() {
   const router = useRouter();
   const [quota, setQuota] = useState<QuotaStatus | null>(null);
-  const [users, setUsers] = useState<UserUsage[]>([]);
+  const [periodData, setPeriodData] = useState<PeriodData | null>(null);
+  const [selectedPeriod, setSelectedPeriod] = useState<Period>("month");
   const [loading, setLoading] = useState(true);
+  const [periodLoading, setPeriodLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [role, setRole] = useState<string | null>(null);
 
@@ -82,46 +101,51 @@ export default function TokenUsagePage() {
 
   const isSuperadmin = role === "superadmin";
 
-  const loadData = useCallback(async () => {
+  const loadQuota = useCallback(async () => {
     const token = getAccessTokenFromCookie();
     if (!token) {
       router.replace("/signin");
       return;
     }
     try {
-      const [quotaRes, usersRes] = await Promise.all([
-        fetch(`${API_BASE}/token-usage/quota`, { headers: { ...getAuthHeader() } }),
-        fetch(`${API_BASE}/token-usage/by-user?days=0&limit=50`, {
-          headers: { ...getAuthHeader() },
-        }),
-      ]);
-
-      if (quotaRes.status === 401 || usersRes.status === 401) {
-        router.replace("/signin");
-        return;
-      }
-      if (!quotaRes.ok || !usersRes.ok) {
-        setError("Gagal mengambil data token usage.");
-        setLoading(false);
-        return;
-      }
-
-      const quotaData: QuotaStatus = await quotaRes.json();
-      const usersData = await usersRes.json();
-      setQuota(quotaData);
-      setUsers(usersData.users ?? []);
-      setLoading(false);
-    } catch (err) {
-      console.error("Gagal memuat token usage:", err);
+      const res = await fetch(`${API_BASE}/token-usage/quota`, {
+        headers: { ...getAuthHeader() },
+      });
+      if (res.status === 401) { router.replace("/signin"); return; }
+      if (!res.ok) { setError("Gagal mengambil data kuota."); return; }
+      setQuota(await res.json());
+    } catch {
       setError("Terjadi kesalahan jaringan.");
-      setLoading(false);
+    }
+  }, [router]);
+
+  const loadPeriodData = useCallback(async (period: Period) => {
+    setPeriodLoading(true);
+    try {
+      const res = await fetch(
+        `${API_BASE}/token-usage/by-user/period?period=${period}&limit=50`,
+        { headers: { ...getAuthHeader() } }
+      );
+      if (res.status === 401) { router.replace("/signin"); return; }
+      if (res.ok) setPeriodData(await res.json());
+    } catch {
+      // silently ignore period load errors
+    } finally {
+      setPeriodLoading(false);
     }
   }, [router]);
 
   useEffect(() => {
     setRole(getRoleFromCookie());
-    loadData();
-  }, [loadData]);
+    Promise.all([loadQuota(), loadPeriodData("month")]).finally(() =>
+      setLoading(false)
+    );
+  }, [loadQuota, loadPeriodData]);
+
+  const handlePeriodChange = (period: Period) => {
+    setSelectedPeriod(period);
+    loadPeriodData(period);
+  };
 
   const handleOpenEdit = () => {
     if (!quota) return;
@@ -175,8 +199,7 @@ export default function TokenUsagePage() {
         const detail = body?.detail ?? "Gagal memperbarui kuota.";
         setFormError(typeof detail === "string" ? detail : JSON.stringify(detail));
       }
-    } catch (err) {
-      console.error("Gagal mengirim update kuota:", err);
+    } catch {
       setFormError("Terjadi kesalahan jaringan.");
     } finally {
       setSubmitting(false);
@@ -236,7 +259,7 @@ export default function TokenUsagePage() {
                 )}
               </div>
 
-              {/* Cards */}
+              {/* Quota Cards */}
               <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                 <StatCard label="Jatah Harian" value={fmt(quota.daily_quota)} sub={`Budget hari ini: ${fmt(dailyBudgetToday)} (termasuk rollover)`} />
                 <StatCard label="Terpakai Hari Ini" value={fmt(quota.used_today)} sub={`${pct(quota.used_today, dailyBudgetToday)}% dari budget hari ini`} barPct={pct(quota.used_today, dailyBudgetToday)} />
@@ -246,15 +269,73 @@ export default function TokenUsagePage() {
             </div>
           )}
 
-          {/* Top users table */}
+          {/* Period breakdown section */}
           <div className="rounded-[10px] border border-stroke bg-white p-4 shadow-1 dark:border-dark-3 dark:bg-gray-dark dark:shadow-card sm:p-7.5">
-            <h3 className="mb-6 text-xl font-semibold text-dark dark:text-white">
-              Top Users berdasarkan Token
-            </h3>
+            {/* Header + Period Tabs */}
+            <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <h3 className="text-xl font-semibold text-dark dark:text-white">
+                Penggunaan per Pengguna
+              </h3>
 
-            {users.length === 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {(["today", "week", "month", "year"] as Period[]).map((p) => (
+                  <button
+                    key={p}
+                    onClick={() => handlePeriodChange(p)}
+                    className={cn(
+                      "rounded-lg px-4 py-2 text-sm font-semibold transition-colors",
+                      selectedPeriod === p
+                        ? "bg-[#FE6C11] text-white"
+                        : "border border-stroke text-dark hover:bg-gray-100 dark:border-dark-3 dark:text-white dark:hover:bg-[#2d2a27]"
+                    )}
+                  >
+                    {PERIOD_LABELS[p]}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Period Summary Cards */}
+            {periodData && (
+              <div className="mb-6 grid gap-4 sm:grid-cols-3">
+                <MiniStatCard
+                  label="Total Token"
+                  value={fmt(periodData.total_tokens)}
+                  icon={
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="h-5 w-5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
+                    </svg>
+                  }
+                />
+                <MiniStatCard
+                  label="Total Percakapan"
+                  value={fmt(periodData.total_conversations)}
+                  icon={
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="h-5 w-5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
+                    </svg>
+                  }
+                />
+                <MiniStatCard
+                  label="Pengguna Aktif"
+                  value={fmt(periodData.active_users)}
+                  icon={
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="h-5 w-5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" />
+                    </svg>
+                  }
+                />
+              </div>
+            )}
+
+            {/* Users Table */}
+            {periodLoading ? (
+              <div className="flex h-32 items-center justify-center">
+                <div className="h-8 w-8 animate-spin rounded-full border-4 border-solid border-primary border-t-transparent" />
+              </div>
+            ) : !periodData || periodData.users.length === 0 ? (
               <div className="py-10 text-center text-gray-500 dark:text-[#8f8f8a]">
-                Belum ada data penggunaan token.
+                Belum ada data penggunaan untuk {PERIOD_LABELS[selectedPeriod].toLowerCase()}.
               </div>
             ) : (
               <div className="max-w-full overflow-x-auto">
@@ -266,7 +347,7 @@ export default function TokenUsagePage() {
                       <TableHead>Role</TableHead>
                       <TableHead className="text-right">Total Token</TableHead>
                       <TableHead className="text-right">Percakapan</TableHead>
-                      {isSuperadmin && (
+                      {periodData.cost_visible && (
                         <TableHead className="text-right">Biaya (USD)</TableHead>
                       )}
                       <TableHead className="xl:pr-7.5 text-right">Terakhir Aktif</TableHead>
@@ -274,7 +355,7 @@ export default function TokenUsagePage() {
                   </TableHeader>
 
                   <TableBody>
-                    {users.map((u, idx) => (
+                    {periodData.users.map((u, idx) => (
                       <TableRow key={u.user_id ?? `anon-${idx}`} className="border-[#eee] dark:border-dark-3">
                         <TableCell className="text-dark dark:text-white xl:pl-7.5">{idx + 1}</TableCell>
                         <TableCell>
@@ -290,7 +371,7 @@ export default function TokenUsagePage() {
                         <TableCell className="capitalize text-dark dark:text-white">{u.role || "-"}</TableCell>
                         <TableCell className="text-right font-semibold text-dark dark:text-white">{fmt(u.total_tokens)}</TableCell>
                         <TableCell className="text-right text-dark dark:text-white">{fmt(u.conversations)}</TableCell>
-                        {isSuperadmin && (
+                        {periodData.cost_visible && (
                           <TableCell className="text-right text-dark dark:text-white">
                             {u.total_cost_usd ? `$${u.total_cost_usd.toFixed(4)}` : "-"}
                           </TableCell>
@@ -418,6 +499,28 @@ function StatCard({
         </div>
       )}
       {sub && <p className="mt-2 text-xs text-gray-500 dark:text-[#8f8f8a]">{sub}</p>}
+    </div>
+  );
+}
+
+function MiniStatCard({
+  label,
+  value,
+  icon,
+}: {
+  label: string;
+  value: string;
+  icon: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center gap-4 rounded-[10px] border border-stroke bg-[#F7F9FC] p-4 dark:border-dark-3 dark:bg-dark-2">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#FE6C11]/10 text-[#FE6C11]">
+        {icon}
+      </div>
+      <div>
+        <p className="text-xs font-medium text-gray-500 dark:text-[#8f8f8a]">{label}</p>
+        <p className="text-xl font-bold text-dark dark:text-white">{value}</p>
+      </div>
     </div>
   );
 }
