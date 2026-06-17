@@ -50,6 +50,7 @@ interface Message {
   evidence?: Record<string, unknown>[];
   suggestions?: string[];
   chart?: Record<string, unknown> | null;
+  charts?: Record<string, unknown>[] | null;
   data?: Record<string, unknown> | null;
   clarification?: ClarificationData | null;
 }
@@ -138,6 +139,7 @@ interface ChatApiResponse {
   evidence?: Record<string, unknown>[];
   data?: Record<string, unknown> | null;
   chart?: Record<string, unknown> | null;
+  charts?: Record<string, unknown>[] | null;
   suggestions?: string[];
   clarification?: ClarificationData | null;
   clarification_data?: ClarificationData | null;
@@ -1093,6 +1095,7 @@ function hydrateHistory(raw: string | null) {
             evidence: Array.isArray(msg.evidence) ? msg.evidence : undefined,
             suggestions: Array.isArray(msg.suggestions) ? msg.suggestions : undefined,
             chart: msg.chart ?? null,
+            charts: Array.isArray(msg.charts) ? msg.charts : null,
             data: msg.data ?? null,
             clarification: msg.clarification ?? null,
           }))
@@ -2628,6 +2631,7 @@ export default function ChatPage() {
                         evidence: payload?.evidence ?? [],
                         suggestions: payload?.suggestions ?? [],
                         chart: payload?.chart ?? null,
+                        charts: Array.isArray(payload?.charts) ? payload.charts : null,
                         data: payload?.data ?? null,
                         clarification: parsedClarification,
                       }
@@ -2783,6 +2787,7 @@ export default function ChatPage() {
                 evidence: data.evidence ?? [],
                 suggestions: data.suggestions ?? [],
                 chart: data.chart ?? null,
+                charts: Array.isArray(data.charts) ? data.charts : null,
                 data: data.data ?? null,
                 clarification: parsedClarification,
               }
@@ -3300,14 +3305,19 @@ export default function ChatPage() {
                   </div>
                 </div>
 
-                {/* Chart — display chart data (assistant only) */}
-                {msg.role === "assistant" && msg.chart &&
-                  typeof msg.chart === "object" &&
-                  "type" in msg.chart &&
-                  "title" in msg.chart &&
-                  "data" in msg.chart && (
-                  <Chart chart={msg.chart as unknown as ChartData} />
-                )}
+                {/* Charts — render all chart specs (assistant only) */}
+                {msg.role === "assistant" && (() => {
+                  const allCharts = (
+                    msg.charts && msg.charts.length > 0
+                      ? msg.charts
+                      : msg.chart && typeof msg.chart === "object" && "type" in msg.chart
+                        ? [msg.chart]
+                        : []
+                  ) as unknown as ChartData[];
+                  return allCharts
+                    .filter((c) => c && "data" in c)
+                    .map((c, idx) => <Chart key={idx} chart={c} />);
+                })()}
 
                 {/* Suggestions — quick-reply pills (assistant only) */}
                 {msg.role === "assistant" && msg.suggestions && msg.suggestions.length > 0 && (

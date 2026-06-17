@@ -47,6 +47,8 @@ interface UserUsage {
   email: string | null;
   role: string | null;
   total_tokens: number;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
   total_cost_usd: number | null;
   conversations: number;
   last_activity: string | null;
@@ -346,6 +348,12 @@ export default function TokenUsagePage() {
                       <TableHead>User</TableHead>
                       <TableHead>Role</TableHead>
                       <TableHead className="text-right">Total Token</TableHead>
+                      {isSuperadmin && (
+                        <>
+                          <TableHead className="text-right">Token Input</TableHead>
+                          <TableHead className="text-right">Token Output</TableHead>
+                        </>
+                      )}
                       <TableHead className="text-right">Percakapan</TableHead>
                       {periodData.cost_visible && (
                         <TableHead className="text-right">Biaya (USD)</TableHead>
@@ -370,6 +378,12 @@ export default function TokenUsagePage() {
                         </TableCell>
                         <TableCell className="capitalize text-dark dark:text-white">{u.role || "-"}</TableCell>
                         <TableCell className="text-right font-semibold text-dark dark:text-white">{fmt(u.total_tokens)}</TableCell>
+                        {isSuperadmin && (
+                          <>
+                            <TableCell className="text-right text-dark dark:text-white">{fmt(u.prompt_tokens)}</TableCell>
+                            <TableCell className="text-right text-dark dark:text-white">{fmt(u.completion_tokens)}</TableCell>
+                          </>
+                        )}
                         <TableCell className="text-right text-dark dark:text-white">{fmt(u.conversations)}</TableCell>
                         {periodData.cost_visible && (
                           <TableCell className="text-right text-dark dark:text-white">
