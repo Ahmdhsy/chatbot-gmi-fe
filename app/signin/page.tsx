@@ -91,9 +91,9 @@ export default function SignIn() {
           showToast('success', 'Login berhasil, memproses sesi...');
         }
 
-        const isSuperAdmin = role === 'superadmin';
-        const targetPath = isSuperAdmin ? '/admin' : '/chat';
-        const pageLabel = isSuperAdmin ? 'dashboard admin' : 'chatbot';
+        const isAdminOrAbove = role === 'superadmin' || role === 'admin';
+        const targetPath = isAdminOrAbove ? '/admin' : '/chat';
+        const pageLabel = isAdminOrAbove ? 'dashboard admin' : 'chatbot';
 
         showToast('success', `Login berhasil! Mengarahkan ke halaman ${pageLabel}...`);
         setTimeout(() => router.replace(targetPath), 1200);
