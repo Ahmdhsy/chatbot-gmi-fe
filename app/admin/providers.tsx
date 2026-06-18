@@ -23,9 +23,13 @@ export function Providers({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // If cookie role is already superadmin, allow immediately
+    // If cookie role is already admin or superadmin, allow immediately
     if (role === "superadmin") {
       setIsSuperAdmin(true);
+      setAuthorized(true);
+      return;
+    }
+    if (role === "admin") {
       setAuthorized(true);
       return;
     }
@@ -45,6 +49,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
           if (freshRole === "superadmin") {
             setRoleCookie(freshRole, 7);
             setIsSuperAdmin(true);
+            setAuthorized(true);
+          } else if (freshRole === "admin") {
+            setRoleCookie(freshRole, 7);
             setAuthorized(true);
           } else {
             router.replace("/chat");
@@ -69,7 +76,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <ThemeProvider forcedTheme="dark" attribute="class">
       <SidebarProvider>
         {children}
-        {isSuperAdmin && <SuperAdminFab mode="dashboard" />}
+        <SuperAdminFab mode="dashboard" />
       </SidebarProvider>
     </ThemeProvider>
   );

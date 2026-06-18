@@ -33,6 +33,12 @@ export const NAV_DATA: NavSection[] = [
         icon: Icons.User,
         items: [],
       },
+      {
+        title: "Token Usage",
+        url: "/admin/token-usage",
+        icon: Icons.PieChart,
+        items: [],
+      },
     ],
   },
 ];
