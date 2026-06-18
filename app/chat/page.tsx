@@ -104,6 +104,11 @@ interface LangchainHistoryItem {
   question?: string;
   answer?: string;
   timestamp?: string | null;
+  chart?: Record<string, unknown> | null;
+  data?: Record<string, unknown> | null;
+  evidence?: Record<string, unknown>[];
+  suggestions?: string[];
+  clarification?: ClarificationData | null;
 }
 
 interface LangchainHistoryResponse {
@@ -990,6 +995,11 @@ function normalizeHistoryMessages(raw: unknown): Message[] {
       role: (item.type === "human" || item.role === "user") ? "user" : "assistant",
       content: String(item.content ?? item.text ?? ""),
       createdAt: item.created_at ? new Date(String(item.created_at)) : new Date(),
+      chart: (item.chart as Record<string, unknown>) ?? (item.additional_kwargs as any)?.chart ?? null,
+      data: (item.data as Record<string, unknown>) ?? (item.additional_kwargs as any)?.data ?? null,
+      evidence: (item.evidence as Record<string, unknown>[]) ?? (item.additional_kwargs as any)?.evidence ?? undefined,
+      suggestions: (item.suggestions as string[]) ?? (item.additional_kwargs as any)?.suggestions ?? undefined,
+      clarification: (item.clarification as ClarificationData) ?? (item.additional_kwargs as any)?.clarification ?? null,
     }));
   }
 
@@ -1014,6 +1024,11 @@ function normalizeHistoryMessages(raw: unknown): Message[] {
         role: "assistant",
         content: item.answer,
         createdAt: timestamp,
+        chart: item.chart ?? null,
+        data: item.data ?? null,
+        evidence: item.evidence ?? undefined,
+        suggestions: item.suggestions ?? undefined,
+        clarification: item.clarification ?? null,
       });
     }
   });
