@@ -4,10 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import dynamic from "next/dynamic";
 import type { ApexOptions } from "apexcharts";
 import Breadcrumb from "@/components/Breadcrumbs/Breadcrumb";
-import {
-  getAccessTokenFromCookie,
-  getAuthHeader,
-} from "@/app/lib/auth";
+import { apiFetch } from "@/app/lib/api";
 import {
   Table,
   TableBody,
@@ -20,8 +17,6 @@ import { useRouter } from "next/navigation";
 import dayjs from "dayjs";
 
 const Chart = dynamic(() => import("react-apexcharts"), { ssr: false });
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8001/v1";
 
 interface InsightData {
   today: { conversations: number; total_tokens: number; active_users: number };
@@ -68,13 +63,8 @@ export default function AdminDashboard() {
   const [error, setError] = useState(false);
 
   const loadInsights = useCallback(async () => {
-    const token = getAccessTokenFromCookie();
-    if (!token) { router.replace("/signin"); return; }
     try {
-      const res = await fetch(`${API_BASE}/token-usage/insights`, {
-        headers: { ...getAuthHeader() },
-      });
-      if (res.status === 401) { router.replace("/signin"); return; }
+      const res = await apiFetch("/token-usage/insights");
       if (!res.ok) { setError(true); return; }
       setInsights(await res.json());
     } catch {
@@ -82,7 +72,7 @@ export default function AdminDashboard() {
     } finally {
       setLoading(false);
     }
-  }, [router]);
+  }, []);
 
   useEffect(() => { loadInsights(); }, [loadInsights]);
 

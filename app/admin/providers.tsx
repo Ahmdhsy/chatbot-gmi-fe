@@ -5,9 +5,8 @@ import { useRouter } from "next/navigation";
 import { SidebarProvider } from "@/components/Layouts/sidebar/sidebar-context";
 import { ThemeProvider } from "next-themes";
 import { getAccessTokenFromCookie, getRoleFromCookie, setRoleCookie } from "../lib/auth";
+import { apiFetch } from "../lib/api";
 import SuperAdminFab from "../components/SuperAdminFab";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8001/v1";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -37,11 +36,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     // Fallback: verify role with backend to handle missing/out-of-sync cookies
     const verifyRoleWithBackend = async () => {
       try {
-        const res = await fetch(`${API_BASE}/auth/me`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
+        const res = await apiFetch("/auth/me");
 
         if (res.ok) {
           const data = await res.json();

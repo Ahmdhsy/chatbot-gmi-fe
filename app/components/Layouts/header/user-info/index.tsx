@@ -10,10 +10,9 @@ import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { getAccessTokenFromCookie, getAuthHeader, clearAccessTokenCookie } from "@/app/lib/auth";
+import { getAccessTokenFromCookie, clearAccessTokenCookie } from "@/app/lib/auth";
+import { apiFetch } from "@/app/lib/api";
 import { LogOutIcon, SettingsIcon, UserIcon } from "./icons";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8001/v1";
 
 export function UserInfo() {
   const [isOpen, setIsOpen] = useState(false);
@@ -35,11 +34,7 @@ export function UserInfo() {
       }
 
       try {
-        const res = await fetch(`${API_BASE}/auth/me`, {
-          headers: {
-            ...getAuthHeader(),
-          },
-        });
+        const res = await apiFetch("/auth/me");
 
         if (res.ok) {
           const data = await res.json();

@@ -1,9 +1,8 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
 import Breadcrumb from "@/components/Breadcrumbs/Breadcrumb";
-import { getAccessTokenFromCookie, getAuthHeader } from "@/app/lib/auth";
+import { apiFetch } from "@/app/lib/api";
 import {
   Table,
   TableBody,
@@ -15,8 +14,6 @@ import {
 import { cn } from "@/lib/utils";
 import dayjs from "dayjs";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8001/v1";
-
 interface UserType {
   user_id: string;
   email: string;
@@ -27,7 +24,6 @@ interface UserType {
 }
 
 export default function ManageUsersPage() {
-  const router = useRouter();
   const [users, setUsers] = useState<UserType[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -74,13 +70,7 @@ export default function ManageUsersPage() {
     setShowEditModal(true);
 
     try {
-      const token = getAccessTokenFromCookie();
-      if (!token) return;
-      const res = await fetch(`${API_BASE}/auth/users/${u.user_id}`, {
-        headers: {
-          ...getAuthHeader(),
-        },
-      });
+      const res = await apiFetch(`/auth/users/${u.user_id}`);
       if (res.ok) {
         const freshUser = await res.json();
         setFormEmail(freshUser.email);
@@ -136,12 +126,6 @@ export default function ManageUsersPage() {
     }
 
     setSubmitting(true);
-    const token = getAccessTokenFromCookie();
-    if (!token) {
-      router.replace("/signin");
-      return;
-    }
-
     try {
       const payload: any = {
         email: formEmail.trim(),
@@ -152,23 +136,15 @@ export default function ManageUsersPage() {
         payload.password = formPassword;
       }
 
-      const res = await fetch(`${API_BASE}/auth/users/${editingUserId}`, {
+      const res = await apiFetch(`/auth/users/${editingUserId}`, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          ...getAuthHeader(),
-        },
         body: JSON.stringify(payload),
       });
 
       if (res.ok) {
         setFormSuccess("User berhasil diperbarui!");
-        
-        const refreshRes = await fetch(`${API_BASE}/auth/users`, {
-          headers: {
-            ...getAuthHeader(),
-          },
-        });
+
+        const refreshRes = await apiFetch("/auth/users");
         if (refreshRes.ok) {
           const freshData = await refreshRes.json();
           setUsers(freshData);
@@ -204,28 +180,15 @@ export default function ManageUsersPage() {
     setFormError(null);
     setFormSuccess(null);
 
-    const token = getAccessTokenFromCookie();
-    if (!token) {
-      router.replace("/signin");
-      return;
-    }
-
     try {
-      const res = await fetch(`${API_BASE}/auth/users/${userToDelete.user_id}`, {
+      const res = await apiFetch(`/auth/users/${userToDelete.user_id}`, {
         method: "DELETE",
-        headers: {
-          ...getAuthHeader(),
-        },
       });
 
       if (res.ok) {
         setFormSuccess("User berhasil dihapus!");
-        
-        const refreshRes = await fetch(`${API_BASE}/auth/users`, {
-          headers: {
-            ...getAuthHeader(),
-          },
-        });
+
+        const refreshRes = await apiFetch("/auth/users");
         if (refreshRes.ok) {
           const freshData = await refreshRes.json();
           setUsers(freshData);
@@ -281,19 +244,9 @@ export default function ManageUsersPage() {
     }
 
     setSubmitting(true);
-    const token = getAccessTokenFromCookie();
-    if (!token) {
-      router.replace("/signin");
-      return;
-    }
-
     try {
-      const res = await fetch(`${API_BASE}/auth/users`, {
+      const res = await apiFetch("/auth/users", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...getAuthHeader(),
-        },
         body: JSON.stringify({
           email: formEmail.trim(),
           username: formUsername.trim(),
@@ -304,13 +257,8 @@ export default function ManageUsersPage() {
 
       if (res.ok) {
         setFormSuccess("User berhasil didaftarkan!");
-        
-        // Reload users list
-        const refreshRes = await fetch(`${API_BASE}/auth/users`, {
-          headers: {
-            ...getAuthHeader(),
-          },
-        });
+
+        const refreshRes = await apiFetch("/auth/users");
         if (refreshRes.ok) {
           const freshData = await refreshRes.json();
           setUsers(freshData);
@@ -336,19 +284,8 @@ export default function ManageUsersPage() {
     let active = true;
 
     const fetchUsers = async () => {
-      const token = getAccessTokenFromCookie();
-      if (!token) {
-        router.replace("/signin");
-        return;
-      }
-
       try {
-        const res = await fetch(`${API_BASE}/auth/users`, {
-          headers: {
-            ...getAuthHeader(),
-          },
-        });
-
+        const res = await apiFetch("/auth/users");
         if (res.ok) {
           const data = await res.json();
           if (active) {
@@ -356,16 +293,9 @@ export default function ManageUsersPage() {
             setLoading(false);
           }
         } else {
-          if (res.status === 401 || res.status === 403) {
-            if (active) {
-              setError("Unauthorized or insufficient privileges to view users.");
-              setLoading(false);
-            }
-          } else {
-            if (active) {
-              setError(`Gagal mengambil data user (status ${res.status}).`);
-              setLoading(false);
-            }
+          if (active) {
+            setError(`Gagal mengambil data user (status ${res.status}).`);
+            setLoading(false);
           }
         }
       } catch (err) {
@@ -382,7 +312,7 @@ export default function ManageUsersPage() {
     return () => {
       active = false;
     };
-  }, [router]);
+  }, []);
 
   return (
     <>

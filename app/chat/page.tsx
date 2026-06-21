@@ -9,6 +9,7 @@ import React, {
   KeyboardEvent,
 } from "react";
 import { getAccessTokenFromCookie, clearAccessTokenCookie, getRoleFromCookie } from "../lib/auth";
+import { apiFetch, apiFetchMultipart, API_BASE } from "../lib/api";
 import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
@@ -21,8 +22,6 @@ import SuperAdminFab from "../components/SuperAdminFab";
 import dynamic from "next/dynamic";
 
 const ReactApexChart = dynamic(() => import("react-apexcharts"), { ssr: false });
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8001/v1";
 
 /* ─────────────────────────── Types ─────────────────────────── */
 interface ClarificationOption {
@@ -1884,9 +1883,8 @@ export default function ChatPage() {
     loadedConvIdsRef.current.add(conv.id);
 
     try {
-      const res = await fetch(
-        `${API_BASE}/chat/history/${encodeURIComponent(conv.apiConversationId)}?limit=50`,
-        { headers: { Authorization: `Bearer ${token}` } }
+      const res = await apiFetch(
+        `/chat/history/${encodeURIComponent(conv.apiConversationId)}?limit=50`
       );
       if (res.ok) {
         const raw = await res.json();
@@ -1916,9 +1914,7 @@ export default function ChatPage() {
 
     const fetchCurrentUser = async (t: string, resolvedEmail: string) => {
       try {
-        const res = await fetch(`${API_BASE}/auth/me`, {
-          headers: { Authorization: `Bearer ${t}` },
-        });
+        const res = await apiFetch("/auth/me");
         if (!res.ok) return;
         const me = await res.json() as { username?: string | null; email?: string | null; role?: string | null };
         const resolvedName = (me.username ?? "").trim();
@@ -1939,9 +1935,7 @@ export default function ChatPage() {
 
     const bootstrapHistory = async (t: string, resolvedEmail: string) => {
       try {
-        const res = await fetch(`${API_BASE}/chat/langchain`, {
-          headers: { Authorization: `Bearer ${t}` },
-        });
+        const res = await apiFetch("/chat/langchain");
         if (res.ok) {
           const data = (await res.json()) as LangchainConversationListResponse | LangchainConversationMeta[];
           const items = Array.isArray(data)
@@ -1994,9 +1988,8 @@ export default function ChatPage() {
             mapped.forEach(async (conv) => {
               if (!conv.apiConversationId) return;
               try {
-                const messagesRes = await fetch(
-                  `${API_BASE}/chat/langchain/${encodeURIComponent(conv.apiConversationId)}/messages?limit=50`,
-                  { headers: { Authorization: `Bearer ${t}` } }
+                const messagesRes = await apiFetch(
+                  `/chat/langchain/${encodeURIComponent(conv.apiConversationId)}/messages?limit=50`
                 );
                 if (!messagesRes.ok) return;
                 const messagesData = await messagesRes.json() as LangchainMessagesResponse;
@@ -2182,13 +2175,11 @@ export default function ChatPage() {
     const formData = new FormData();
     formData.append("file", file);
 
-    const url = `${API_BASE}/files/upload?autoIngest=true&conversationId=${encodeURIComponent(currentApiConvId)}`;
     try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
+      const res = await apiFetchMultipart(
+        `/files/upload?autoIngest=true&conversationId=${encodeURIComponent(currentApiConvId)}`,
+        { method: "POST", body: formData }
+      );
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       if (data.ingestionResult?.status === "failed") {
@@ -2221,12 +2212,9 @@ export default function ChatPage() {
     // Call DELETE API if the conversation has been persisted
     if (conv?.apiConversationId && token) {
       try {
-        const res = await fetch(
-          `${API_BASE}/chat/history/${encodeURIComponent(conv.apiConversationId)}`,
-          {
-            method: "DELETE",
-            headers: { Authorization: `Bearer ${token}` },
-          }
+        const res = await apiFetch(
+          `/chat/history/${encodeURIComponent(conv.apiConversationId)}`,
+          { method: "DELETE" }
         );
         if (!res.ok) {
           const body = await res.json().catch(() => null);
@@ -2259,9 +2247,7 @@ export default function ChatPage() {
   async function handleFetchCacheStats() {
     setCacheLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/chat/cache/stats`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiFetch("/chat/cache/stats");
       if (!res.ok) {
         const body = await res.json().catch(() => null);
         const reason = typeof body?.detail === "string" ? body.detail : `Error ${res.status}`;
@@ -2282,10 +2268,7 @@ export default function ChatPage() {
   async function handleClearCache() {
     setCacheLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/chat/cache/clear`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiFetch("/chat/cache/clear", { method: "POST" });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
         const reason = typeof body?.detail === "string" ? body.detail : `Error ${res.status}`;
@@ -2314,9 +2297,7 @@ export default function ChatPage() {
   async function handleFetchLCConversations() {
     setLcLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/chat/langchain`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiFetch("/chat/langchain");
       if (!res.ok) {
         const body = await res.json().catch(() => null);
         const reason = typeof body?.detail === "string" ? body.detail : `Error ${res.status}`;
@@ -2343,9 +2324,8 @@ export default function ChatPage() {
     setLcLoading(true);
     setLcSummary(null);
     try {
-      const res = await fetch(
-        `${API_BASE}/chat/langchain/${encodeURIComponent(apiConvId)}/summary`,
-        { headers: { Authorization: `Bearer ${token}` } }
+      const res = await apiFetch(
+        `/chat/langchain/${encodeURIComponent(apiConvId)}/summary`
       );
       if (!res.ok) {
         const body = await res.json().catch(() => null);
@@ -2371,9 +2351,8 @@ export default function ChatPage() {
     setLcLoading(true);
     setLcMessages(null);
     try {
-      const res = await fetch(
-        `${API_BASE}/chat/langchain/${encodeURIComponent(apiConvId)}/messages?limit=50`,
-        { headers: { Authorization: `Bearer ${token}` } }
+      const res = await apiFetch(
+        `/chat/langchain/${encodeURIComponent(apiConvId)}/messages?limit=50`
       );
       if (!res.ok) {
         const body = await res.json().catch(() => null);
@@ -2395,12 +2374,9 @@ export default function ChatPage() {
   async function handleClearLCMemory(apiConvId: string) {
     setLcLoading(true);
     try {
-      const res = await fetch(
-        `${API_BASE}/chat/langchain/${encodeURIComponent(apiConvId)}`,
-        {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${token}` },
-        }
+      const res = await apiFetch(
+        `/chat/langchain/${encodeURIComponent(apiConvId)}`,
+        { method: "DELETE" }
       );
       if (!res.ok) {
         const body = await res.json().catch(() => null);
@@ -2432,10 +2408,7 @@ export default function ChatPage() {
   async function handleDeleteAllLC() {
     setLcLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/chat/langchain?confirmation=DELETE_ALL`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiFetch("/chat/langchain?confirmation=DELETE_ALL", { method: "DELETE" });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
         const reason = typeof body?.detail === "string" ? body.detail : `Error ${res.status}`;
@@ -2461,10 +2434,7 @@ export default function ChatPage() {
   async function handleDeleteAllHistory() {
     setLcLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/chat/history?confirmation=DELETE_ALL`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiFetch("/chat/history?confirmation=DELETE_ALL", { method: "DELETE" });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
         const reason = typeof body?.detail === "string" ? body.detail : `Error ${res.status}`;
@@ -2499,12 +2469,9 @@ export default function ChatPage() {
     try {
       const encodedConvId = encodeURIComponent(deleteBeforeConvId.trim());
       const encodedTs = encodeURIComponent(deleteBeforeTs.trim());
-      const res = await fetch(
-        `${API_BASE}/chat/history/${encodedConvId}/before/${encodedTs}`,
-        {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${token}` },
-        }
+      const res = await apiFetch(
+        `/chat/history/${encodedConvId}/before/${encodedTs}`,
+        { method: "DELETE" }
       );
       if (!res.ok) {
         const body = await res.json().catch(() => null);
@@ -2716,12 +2683,8 @@ export default function ChatPage() {
       }
 
       // ── Standard JSON mode ──
-      const res = await fetch(`${API_BASE}/chat`, {
+      const res = await apiFetch("/chat", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
         body: JSON.stringify(reqBody),
       });
 

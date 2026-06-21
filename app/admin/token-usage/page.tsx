@@ -1,13 +1,9 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
 import Breadcrumb from "@/components/Breadcrumbs/Breadcrumb";
-import {
-  getAccessTokenFromCookie,
-  getAuthHeader,
-  getRoleFromCookie,
-} from "@/app/lib/auth";
+import { apiFetch } from "@/app/lib/api";
+import { getRoleFromCookie } from "@/app/lib/auth";
 import {
   Table,
   TableBody,
@@ -18,8 +14,6 @@ import {
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import dayjs from "dayjs";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8001/v1";
 
 interface QuotaStatus {
   enabled: boolean;
@@ -81,7 +75,6 @@ const pct = (used: number, total: number) =>
   total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0;
 
 export default function TokenUsagePage() {
-  const router = useRouter();
   const [quota, setQuota] = useState<QuotaStatus | null>(null);
   const [periodData, setPeriodData] = useState<PeriodData | null>(null);
   const [selectedPeriod, setSelectedPeriod] = useState<Period>("month");
@@ -104,38 +97,26 @@ export default function TokenUsagePage() {
   const isSuperadmin = role === "superadmin";
 
   const loadQuota = useCallback(async () => {
-    const token = getAccessTokenFromCookie();
-    if (!token) {
-      router.replace("/signin");
-      return;
-    }
     try {
-      const res = await fetch(`${API_BASE}/token-usage/quota`, {
-        headers: { ...getAuthHeader() },
-      });
-      if (res.status === 401) { router.replace("/signin"); return; }
+      const res = await apiFetch("/token-usage/quota");
       if (!res.ok) { setError("Gagal mengambil data kuota."); return; }
       setQuota(await res.json());
     } catch {
       setError("Terjadi kesalahan jaringan.");
     }
-  }, [router]);
+  }, []);
 
   const loadPeriodData = useCallback(async (period: Period) => {
     setPeriodLoading(true);
     try {
-      const res = await fetch(
-        `${API_BASE}/token-usage/by-user/period?period=${period}&limit=50`,
-        { headers: { ...getAuthHeader() } }
-      );
-      if (res.status === 401) { router.replace("/signin"); return; }
+      const res = await apiFetch(`/token-usage/by-user/period?period=${period}&limit=50`);
       if (res.ok) setPeriodData(await res.json());
     } catch {
       // silently ignore period load errors
     } finally {
       setPeriodLoading(false);
     }
-  }, [router]);
+  }, []);
 
   useEffect(() => {
     setRole(getRoleFromCookie());
@@ -179,9 +160,8 @@ export default function TokenUsagePage() {
 
     setSubmitting(true);
     try {
-      const res = await fetch(`${API_BASE}/token-usage/quota`, {
+      const res = await apiFetch("/token-usage/quota", {
         method: "PUT",
-        headers: { "Content-Type": "application/json", ...getAuthHeader() },
         body: JSON.stringify({
           enabled: formEnabled,
           daily_quota: Math.trunc(daily),

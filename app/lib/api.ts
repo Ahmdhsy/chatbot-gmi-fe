@@ -1,8 +1,10 @@
 /**
  * API Utility — centralized fetch wrapper
- * - Always sends cookies with credentials: "include"
+ * - Always sends Authorization header + cookies
  * - Auto-redirects to /signin on 401 Unauthorized
  */
+
+import { getAuthHeader } from "./auth";
 
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8001/v1";
@@ -28,9 +30,10 @@ export async function apiFetch(
 
   const res = await fetch(url, {
     ...fetchOptions,
-    credentials: "include", // Always send HttpOnly cookies
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
+      ...getAuthHeader(),
       ...(fetchOptions.headers ?? {}),
     },
   });
@@ -60,7 +63,10 @@ export async function apiFetchMultipart(
   const res = await fetch(url, {
     ...fetchOptions,
     credentials: "include",
-    // No Content-Type header — browser adds it with multipart boundary
+    headers: {
+      ...getAuthHeader(),
+      // No Content-Type — browser adds it with multipart boundary
+    },
   });
 
   if (res.status === 401 && !skipRedirectOn401) {
