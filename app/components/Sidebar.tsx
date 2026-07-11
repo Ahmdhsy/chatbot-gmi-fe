@@ -432,7 +432,7 @@ export default function Sidebar({
                   : userRole === "admin"
                   ? "Admin"
                   : userRole === "user"
-                  ? "Karyawan"
+                  ? "Operational User"
                   : userRole.charAt(0).toUpperCase() + userRole.slice(1)}
               </p>
             </div>

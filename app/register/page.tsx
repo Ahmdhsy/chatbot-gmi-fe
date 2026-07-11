@@ -3,7 +3,6 @@
 import React, { useState, useEffect } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import { getAccessTokenFromCookie, setAccessTokenCookie, setRoleCookie, setUserIdCookie } from '../lib/auth';
 
 /* ─── Mini Toast component ─── */
 type ToastType = 'success' | 'error';
@@ -46,57 +45,90 @@ function Toast({ type, message, onClose }: ToastProps) {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:8001/v1';
 
-export default function SignIn() {
+// Roles a user may self-assign on registration (admin/superadmin excluded by the backend).
+const ROLE_OPTIONS = [
+  { value: 'user', label: 'Operational User' },
+  { value: 'manager', label: 'Manager' },
+  { value: 'executive', label: 'Executive' },
+];
+
+const inputStyle: React.CSSProperties = {
+  width: '100%',
+  border: '1px solid #47413a',
+  borderRadius: '12px',
+  padding: '12px 14px',
+  fontSize: '0.875rem',
+  color: '#e7e1d5',
+  background: '#2d2a27',
+  outline: 'none',
+  boxSizing: 'border-box',
+};
+
+const labelStyle: React.CSSProperties = {
+  fontSize: '0.75rem',
+  fontWeight: 600,
+  color: '#ece7dc',
+  marginBottom: '6px',
+  display: 'block',
+};
+
+export default function Register() {
+  const router = useRouter();
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [role, setRole] = useState('user');
+  const [area, setArea] = useState('');
+  const [region, setRegion] = useState('');
+  const [nop, setNop] = useState('');
   const [loading, setLoading] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [toast, setToast] = useState<{ type: ToastType; message: string } | null>(null);
-  const router = useRouter();
 
   const showToast = (type: ToastType, message: string) => setToast({ type, message });
+
+  function validate(): string | null {
+    if (!email.trim() || !username.trim() || !password || !confirmPassword) {
+      return 'Semua field bertanda wajib harus diisi.';
+    }
+    if (password.length < 8) return 'Password minimal harus 8 karakter.';
+    if (!/[A-Z]/.test(password)) return 'Password harus memiliki minimal satu huruf besar (A-Z).';
+    if (!/\d/.test(password)) return 'Password harus memiliki minimal satu angka (0-9).';
+    if (password !== confirmPassword) return 'Konfirmasi password tidak sesuai.';
+    return null;
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setFieldErrors({});
-    setLoading(true);
 
+    const validationError = validate();
+    if (validationError) {
+      showToast('error', validationError);
+      return;
+    }
+
+    setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/auth/login`, {
+      const res = await fetch(`${API_BASE}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({
+          email: email.trim(),
+          username: username.trim(),
+          password,
+          role,
+          area: area.trim() || null,
+          region: region.trim() || null,
+          nop: nop.trim() || null,
+        }),
       });
 
       if (res.ok) {
-        const data = await res.json();
-        const token: string = data?.access_token ?? '';
-        const role: string = data?.role ?? 'user';
-        const userId: string = data?.user_id ?? '';
-        
-        if (!token) {
-          showToast('error', 'Login berhasil tetapi token tidak ditemukan di response.');
-          return;
-        }
-
-        // Store token, role, and user_id in cookies (client-side). For HttpOnly prefer backend-set cookie.
-        setAccessTokenCookie(token, 7);
-        setRoleCookie(role, 7);
-        setUserIdCookie(userId, 7);
-
-        // Verify cookie persistence before redirecting.
-        const persistedToken = getAccessTokenFromCookie();
-        if (!persistedToken) {
-          showToast('success', 'Login berhasil, memproses sesi...');
-        }
-
-        const isAdminOrAbove = role === 'superadmin' || role === 'admin';
-        const targetPath = isAdminOrAbove ? '/admin' : '/chat';
-        const pageLabel = isAdminOrAbove ? 'dashboard admin' : 'chatbot';
-
-        showToast('success', `Login berhasil! Mengarahkan ke halaman ${pageLabel}...`);
-        setTimeout(() => router.replace(targetPath), 1200);
+        showToast('success', 'Registrasi berhasil! Mengarahkan ke halaman Sign In...');
+        setTimeout(() => router.replace('/signin'), 1400);
         return;
       }
 
@@ -114,13 +146,11 @@ export default function SignIn() {
         return;
       }
 
-      // 401 / other errors
       const body = await res.json().catch(() => null);
       const reason = typeof body?.detail === 'string'
         ? body.detail
-        : `Login gagal (status ${res.status})`;
+        : `Registrasi gagal (status ${res.status})`;
       showToast('error', reason);
-
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : '';
       showToast('error', message === 'Failed to fetch'
@@ -140,7 +170,6 @@ export default function SignIn() {
         background: 'radial-gradient(120% 90% at 20% 0%, #2a2723 0%, #1f1d1b 48%, #171717 100%)',
       }}
     >
-
       {/* Toast */}
       {toast && (
         <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />
@@ -148,18 +177,11 @@ export default function SignIn() {
 
       {/* ══════════════════ LEFT PANEL ══════════════════ */}
       <aside
-        className="flex w-1/2 relative overflow-hidden flex-col"
-        style={{
-          background: 'transparent',
-          height: '100vh',
-        }}
+        className="hidden md:flex w-1/2 relative overflow-hidden flex-col"
+        style={{ background: 'transparent', height: '100vh' }}
       >
-
-        {/* ─── Telkomsel Logo (top-left) ─── */}
-        <div
-          className="absolute z-10"
-          style={{ top: '40px', left: '40px' }}
-        >
+        {/* Telkomsel Logo (top-left) */}
+        <div className="absolute z-10" style={{ top: '40px', left: '40px' }}>
           <Image
             src="/telkomsel.png"
             alt="Telkomsel"
@@ -175,12 +197,8 @@ export default function SignIn() {
           />
         </div>
 
-
-        {/* ─── Large Tsel mark — centered ─── */}
-        <div
-          className="absolute pointer-events-none"
-          style={{ zIndex: 1, top: '80px', left: 0, right: 0 }}
-        >
+        {/* Large Tsel mark — centered */}
+        <div className="absolute pointer-events-none" style={{ zIndex: 1, top: '80px', left: 0, right: 0 }}>
           <Image
             src="/tsel.svg"
             alt=""
@@ -198,11 +216,8 @@ export default function SignIn() {
           />
         </div>
 
-
-        {/* ─── Bottom text ─── */}
-        <div
-          className="absolute bottom-10 left-10 z-10"
-        >
+        {/* Bottom text */}
+        <div className="absolute bottom-10 left-10 z-10">
           <p
             className="font-semibold leading-snug"
             style={{
@@ -210,14 +225,13 @@ export default function SignIn() {
               fontWeight: 550,
               color: '#e9e4d9',
               maxWidth: '900px',
-              paddingTop:'700px',
-              paddingLeft:'40px'
+              paddingTop: '700px',
+              paddingLeft: '40px',
             }}
           >
             Empowering Modern Work Through Intelligent Conversations.
           </p>
         </div>
-
       </aside>
 
       {/* ══════════════════ RIGHT PANEL ══════════════════ */}
@@ -225,93 +239,73 @@ export default function SignIn() {
         className="flex flex-1 items-center justify-center px-10 py-12"
         style={{ background: 'transparent', height: '100vh', overflowY: 'auto' }}
       >
-        <div style={{ width: '100%', maxWidth: '420px', background: 'linear-gradient(180deg, #232220 0%, #1e1d1b 100%)', border: '1px solid #3a3530', borderRadius: '18px', padding: '30px 26px', boxShadow: '0 24px 46px rgba(0,0,0,0.42)' }}>
+        <div style={{ width: '100%', maxWidth: '460px', background: 'linear-gradient(180deg, #232220 0%, #1e1d1b 100%)', border: '1px solid #3a3530', borderRadius: '18px', padding: '30px 26px', boxShadow: '0 24px 46px rgba(0,0,0,0.42)' }}>
 
           {/* Title */}
           <h2
             className="text-center font-bold mb-2"
             style={{ fontSize: '2.1rem', color: '#ece7dc', letterSpacing: '0.01em', fontWeight: 650 }}
           >
-            Sign In
+            Create Account
           </h2>
           <div
-            className="mx-auto mb-10"
+            className="mx-auto mb-8"
             style={{ width: '40px', height: '3px', background: '#EC2028', borderRadius: '99px' }}
           />
 
-          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
 
             {/* Email */}
-            <div style={{ position: 'relative' }}>
+            <div>
+              <label style={labelStyle}>Email Address <span style={{ color: '#EC2028' }}>*</span></label>
               <input
                 type="email"
-                name="email"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
                 placeholder="Enter your email address"
                 required
-                style={{
-                  width: '100%',
-                  border: '1px solid #47413a',
-                  borderRadius: '12px',
-                  padding: '12px 40px 12px 14px',
-                  fontSize: '0.875rem',
-                  color: '#e7e1d5',
-                  background: '#2d2a27',
-                  outline: 'none',
-                  boxSizing: 'border-box',
-                }}
+                style={inputStyle}
                 onFocus={e => (e.currentTarget.style.borderColor = '#6a5c4f')}
                 onBlur={e => (e.currentTarget.style.borderColor = '#47413a')}
               />
               {fieldErrors.email ? (
-                <div style={{ color: '#ff4444', fontSize: '0.85rem', marginTop: 6 }}>{fieldErrors.email}</div>
+                <div style={{ color: '#ff4444', fontSize: '0.8rem', marginTop: 6 }}>{fieldErrors.email}</div>
               ) : null}
-              {/* Mail icon */}
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                style={{ position: 'absolute', right: 4, top: '50%', transform: 'translateY(-50%)' }}
-                width="18" height="18" fill="none" viewBox="0 0 24 24"
-                stroke="#8f8f8a" strokeWidth="1.5"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round"
-                  d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25H4.5a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5H4.5a2.25 2.25 0 00-2.25 2.25m19.5 0l-9.75 6.75L2.25 6.75" />
-              </svg>
+            </div>
+
+            {/* Username */}
+            <div>
+              <label style={labelStyle}>Username <span style={{ color: '#EC2028' }}>*</span></label>
+              <input
+                type="text"
+                value={username}
+                onChange={e => setUsername(e.target.value)}
+                placeholder="Enter username"
+                required
+                style={inputStyle}
+                onFocus={e => (e.currentTarget.style.borderColor = '#6a5c4f')}
+                onBlur={e => (e.currentTarget.style.borderColor = '#47413a')}
+              />
             </div>
 
             {/* Password */}
             <div style={{ position: 'relative' }}>
+              <label style={labelStyle}>Password <span style={{ color: '#EC2028' }}>*</span></label>
               <input
                 type={showPassword ? 'text' : 'password'}
-                name="password"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
-                placeholder="Enter password"
+                placeholder="Min. 8 chars, 1 uppercase, 1 number"
                 required
-                minLength={1}
-                style={{
-                  width: '100%',
-                  border: '1px solid #47413a',
-                  borderRadius: '12px',
-                  padding: '12px 40px 12px 14px',
-                  fontSize: '0.875rem',
-                  color: 'white', 
-                  background: '#2d2a27',
-                  outline: 'none',
-                  boxSizing: 'border-box',
-                }}
+                style={{ ...inputStyle, paddingRight: '40px', color: 'white' }}
                 onFocus={e => (e.currentTarget.style.borderColor = '#6a5c4f')}
                 onBlur={e => (e.currentTarget.style.borderColor = '#47413a')}
               />
-              {fieldErrors.password ? (
-                <div style={{ color: '#ff4444', fontSize: '0.85rem', marginTop: 6 }}>{fieldErrors.password}</div>
-              ) : null}
-              {/* Lock / eye toggle */}
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
                 style={{
-                  position: 'absolute', right: 4, top: '50%', transform: 'translateY(-50%)',
+                  position: 'absolute', right: 8, top: '38px',
                   background: 'none', border: 'none', cursor: 'pointer', padding: 0,
                 }}
               >
@@ -321,14 +315,89 @@ export default function SignIn() {
                   </svg>
                 ) : (
                   <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="#8f8f8a" strokeWidth="1.5">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                   </svg>
                 )}
               </button>
             </div>
 
-            {/* Sign In button — orange sesuai design */}
-            <div style={{ paddingTop: '8px' }}>
+            {/* Confirm Password */}
+            <div>
+              <label style={labelStyle}>Confirm Password <span style={{ color: '#EC2028' }}>*</span></label>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={confirmPassword}
+                onChange={e => setConfirmPassword(e.target.value)}
+                placeholder="Confirm password"
+                required
+                style={{ ...inputStyle, color: 'white' }}
+                onFocus={e => (e.currentTarget.style.borderColor = '#6a5c4f')}
+                onBlur={e => (e.currentTarget.style.borderColor = '#47413a')}
+              />
+            </div>
+
+            {/* Role */}
+            <div>
+              <label style={labelStyle}>Role</label>
+              <select
+                value={role}
+                onChange={e => setRole(e.target.value)}
+                style={inputStyle}
+                onFocus={e => (e.currentTarget.style.borderColor = '#6a5c4f')}
+                onBlur={e => (e.currentTarget.style.borderColor = '#47413a')}
+              >
+                {ROLE_OPTIONS.map(opt => (
+                  <option key={opt.value} value={opt.value} style={{ background: '#232220' }}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Location Identity */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+              <div>
+                <label style={labelStyle}>Area</label>
+                <input
+                  type="text"
+                  value={area}
+                  onChange={e => setArea(e.target.value)}
+                  placeholder="e.g. Area Jabar"
+                  style={inputStyle}
+                  onFocus={e => (e.currentTarget.style.borderColor = '#6a5c4f')}
+                  onBlur={e => (e.currentTarget.style.borderColor = '#47413a')}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Region</label>
+                <input
+                  type="text"
+                  value={region}
+                  onChange={e => setRegion(e.target.value)}
+                  placeholder="e.g. R3 Jakarta Banten"
+                  style={inputStyle}
+                  onFocus={e => (e.currentTarget.style.borderColor = '#6a5c4f')}
+                  onBlur={e => (e.currentTarget.style.borderColor = '#47413a')}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label style={labelStyle}>NOP</label>
+              <input
+                type="text"
+                value={nop}
+                onChange={e => setNop(e.target.value)}
+                placeholder="e.g. NOP Bandung"
+                style={inputStyle}
+                onFocus={e => (e.currentTarget.style.borderColor = '#6a5c4f')}
+                onBlur={e => (e.currentTarget.style.borderColor = '#47413a')}
+              />
+            </div>
+
+            {/* Submit */}
+            <div style={{ paddingTop: '6px' }}>
               <button
                 type="submit"
                 disabled={loading}
@@ -349,21 +418,20 @@ export default function SignIn() {
                 onMouseEnter={e => { if (!loading) (e.currentTarget as HTMLButtonElement).style.opacity = '0.9' }}
                 onMouseLeave={e => { if (!loading) (e.currentTarget as HTMLButtonElement).style.opacity = '1' }}
               >
-                {loading ? 'Signing in...' : 'Sign In'}
+                {loading ? 'Creating account...' : 'Create Account'}
               </button>
             </div>
 
-            {/* Link to Register */}
-            <p style={{ textAlign: 'center', fontSize: '0.85rem', color: '#8f8f8a' }}>
-              Belum punya akun?{' '}
-              <a href="/register" style={{ color: '#EC2028', fontWeight: 600, textDecoration: 'none' }}>
-                Daftar
+            {/* Link to Sign In */}
+            <p style={{ textAlign: 'center', fontSize: '0.85rem', color: '#8f8f8a', marginTop: '4px' }}>
+              Sudah punya akun?{' '}
+              <a href="/signin" style={{ color: '#EC2028', fontWeight: 600, textDecoration: 'none' }}>
+                Sign In
               </a>
             </p>
           </form>
         </div>
       </main>
-
     </div>
   );
 }

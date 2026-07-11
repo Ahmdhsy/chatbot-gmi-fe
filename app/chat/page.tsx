@@ -2837,7 +2837,7 @@ export default function ChatPage() {
         onDeleteConv={handleDeleteConv}
         onNewChat={handleNewChat}
         userName={userName || userEmail.split("@")[0] || "User"}
-        userRole={userRole || "Karyawan"}
+        userRole={userRole}
         onLogout={handleLogout}
       />
 

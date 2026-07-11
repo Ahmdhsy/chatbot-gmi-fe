@@ -39,6 +39,12 @@ export const NAV_DATA: NavSection[] = [
         icon: Icons.PieChart,
         items: [],
       },
+      {
+        title: "Database Sources",
+        url: "/admin/databases",
+        icon: Icons.Table,
+        items: [],
+      },
     ],
   },
 ];

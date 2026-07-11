@@ -20,8 +20,18 @@ interface UserType {
   username: string | null;
   role: string;
   is_active: boolean;
+  area: string | null;
+  region: string | null;
+  nop: string | null;
   created_at: string | null;
 }
+
+const ROLE_OPTIONS = [
+  { value: "user", label: "Operational User" },
+  { value: "manager", label: "Manager" },
+  { value: "executive", label: "Executive" },
+  { value: "admin", label: "Admin" },
+];
 
 export default function ManageUsersPage() {
   const [users, setUsers] = useState<UserType[]>([]);
@@ -34,6 +44,9 @@ export default function ManageUsersPage() {
   const [formPassword, setFormPassword] = useState("");
   const [formConfirmPassword, setFormConfirmPassword] = useState("");
   const [formRole, setFormRole] = useState("user"); // default to 'user' (Karyawan)
+  const [formArea, setFormArea] = useState("");
+  const [formRegion, setFormRegion] = useState("");
+  const [formNop, setFormNop] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
@@ -45,15 +58,22 @@ export default function ManageUsersPage() {
   const [userToDelete, setUserToDelete] = useState<UserType | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const handleCloseModal = () => {
-    setShowAddModal(false);
+  const resetFormFields = () => {
     setFormEmail("");
     setFormUsername("");
     setFormPassword("");
     setFormConfirmPassword("");
     setFormRole("user");
+    setFormArea("");
+    setFormRegion("");
+    setFormNop("");
     setFormError(null);
     setFormSuccess(null);
+  };
+
+  const handleCloseModal = () => {
+    setShowAddModal(false);
+    resetFormFields();
   };
 
   const handleOpenEditModal = async (u: UserType) => {
@@ -64,6 +84,9 @@ export default function ManageUsersPage() {
     setFormEmail(u.email);
     setFormUsername(u.username ?? "");
     setFormRole(u.role);
+    setFormArea(u.area ?? "");
+    setFormRegion(u.region ?? "");
+    setFormNop(u.nop ?? "");
     setFormPassword("");
     setFormConfirmPassword("");
     setEditingUserId(u.user_id);
@@ -76,6 +99,9 @@ export default function ManageUsersPage() {
         setFormEmail(freshUser.email);
         setFormUsername(freshUser.username ?? "");
         setFormRole(freshUser.role);
+        setFormArea(freshUser.area ?? "");
+        setFormRegion(freshUser.region ?? "");
+        setFormNop(freshUser.nop ?? "");
       }
     } catch (err) {
       console.error("Gagal mengambil detail user:", err);
@@ -85,13 +111,7 @@ export default function ManageUsersPage() {
   const handleCloseEditModal = () => {
     setShowEditModal(false);
     setEditingUserId(null);
-    setFormEmail("");
-    setFormUsername("");
-    setFormPassword("");
-    setFormConfirmPassword("");
-    setFormRole("user");
-    setFormError(null);
-    setFormSuccess(null);
+    resetFormFields();
   };
 
   const handleEditUserSubmit = async (e: React.FormEvent) => {
@@ -131,6 +151,9 @@ export default function ManageUsersPage() {
         email: formEmail.trim(),
         username: formUsername.trim(),
         role: formRole,
+        area: formArea.trim() || null,
+        region: formRegion.trim() || null,
+        nop: formNop.trim() || null,
       };
       if (formPassword) {
         payload.password = formPassword;
@@ -252,6 +275,9 @@ export default function ManageUsersPage() {
           username: formUsername.trim(),
           password: formPassword,
           role: formRole,
+          area: formArea.trim() || null,
+          region: formRegion.trim() || null,
+          nop: formNop.trim() || null,
         }),
       });
 
@@ -364,6 +390,9 @@ export default function ManageUsersPage() {
                   <TableHead>Username</TableHead>
                   <TableHead>Email Address</TableHead>
                   <TableHead>Role</TableHead>
+                  <TableHead>Area</TableHead>
+                  <TableHead>Region</TableHead>
+                  <TableHead>NOP</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Created At</TableHead>
                   <TableHead className="xl:pr-7.5 text-right">Actions</TableHead>
@@ -393,6 +422,18 @@ export default function ManageUsersPage() {
                       <div className="capitalize font-medium text-dark dark:text-white">
                         {u.role}
                       </div>
+                    </TableCell>
+
+                    <TableCell className="text-dark dark:text-white">
+                      {u.area || "-"}
+                    </TableCell>
+
+                    <TableCell className="text-dark dark:text-white">
+                      {u.region || "-"}
+                    </TableCell>
+
+                    <TableCell className="text-dark dark:text-white">
+                      {u.nop || "-"}
                     </TableCell>
 
                     <TableCell>
@@ -548,9 +589,46 @@ export default function ManageUsersPage() {
                   onChange={(e) => setFormRole(e.target.value)}
                   className="w-full rounded-lg border border-stroke bg-transparent px-4 py-2 text-sm text-dark outline-none dark:border-dark-3 dark:bg-dark-2 dark:text-white focus:border-primary dark:focus:border-primary transition-colors"
                 >
-                  <option value="user" className="dark:bg-[#232220]">Karyawan</option>
-                  <option value="admin" className="dark:bg-[#232220]">Admin</option>
+                  {ROLE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value} className="dark:bg-[#232220]">
+                      {opt.label}
+                    </option>
+                  ))}
                 </select>
+              </div>
+
+              {/* Location Identity */}
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-dark dark:text-[#ece7dc]">Area</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Area Jabar"
+                    value={formArea}
+                    onChange={(e) => setFormArea(e.target.value)}
+                    className="w-full rounded-lg border border-stroke bg-transparent px-4 py-2 text-sm text-dark outline-none dark:border-dark-3 dark:bg-dark-2 dark:text-white focus:border-primary dark:focus:border-primary transition-colors"
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-dark dark:text-[#ece7dc]">Region</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. R3 Jakarta Banten"
+                    value={formRegion}
+                    onChange={(e) => setFormRegion(e.target.value)}
+                    className="w-full rounded-lg border border-stroke bg-transparent px-4 py-2 text-sm text-dark outline-none dark:border-dark-3 dark:bg-dark-2 dark:text-white focus:border-primary dark:focus:border-primary transition-colors"
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-dark dark:text-[#ece7dc]">NOP</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. NOP Bandung"
+                    value={formNop}
+                    onChange={(e) => setFormNop(e.target.value)}
+                    className="w-full rounded-lg border border-stroke bg-transparent px-4 py-2 text-sm text-dark outline-none dark:border-dark-3 dark:bg-dark-2 dark:text-white focus:border-primary dark:focus:border-primary transition-colors"
+                  />
+                </div>
               </div>
 
               {/* Actions */}
@@ -678,9 +756,46 @@ export default function ManageUsersPage() {
                   onChange={(e) => setFormRole(e.target.value)}
                   className="w-full rounded-lg border border-stroke bg-transparent px-4 py-2 text-sm text-dark outline-none dark:border-dark-3 dark:bg-dark-2 dark:text-white focus:border-primary dark:focus:border-primary transition-colors"
                 >
-                  <option value="user" className="dark:bg-[#232220]">Karyawan</option>
-                  <option value="admin" className="dark:bg-[#232220]">Admin</option>
+                  {ROLE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value} className="dark:bg-[#232220]">
+                      {opt.label}
+                    </option>
+                  ))}
                 </select>
+              </div>
+
+              {/* Location Identity */}
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-dark dark:text-[#ece7dc]">Area</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Area Jabar"
+                    value={formArea}
+                    onChange={(e) => setFormArea(e.target.value)}
+                    className="w-full rounded-lg border border-stroke bg-transparent px-4 py-2 text-sm text-dark outline-none dark:border-dark-3 dark:bg-dark-2 dark:text-white focus:border-primary dark:focus:border-primary transition-colors"
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-dark dark:text-[#ece7dc]">Region</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. R3 Jakarta Banten"
+                    value={formRegion}
+                    onChange={(e) => setFormRegion(e.target.value)}
+                    className="w-full rounded-lg border border-stroke bg-transparent px-4 py-2 text-sm text-dark outline-none dark:border-dark-3 dark:bg-dark-2 dark:text-white focus:border-primary dark:focus:border-primary transition-colors"
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-dark dark:text-[#ece7dc]">NOP</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. NOP Bandung"
+                    value={formNop}
+                    onChange={(e) => setFormNop(e.target.value)}
+                    className="w-full rounded-lg border border-stroke bg-transparent px-4 py-2 text-sm text-dark outline-none dark:border-dark-3 dark:bg-dark-2 dark:text-white focus:border-primary dark:focus:border-primary transition-colors"
+                  />
+                </div>
               </div>
 
               {/* Actions */}
