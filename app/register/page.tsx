@@ -3,6 +3,12 @@
 import React, { useState, useEffect } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
+import {
+  LocationHierarchy,
+  areaNames,
+  regionsForArea,
+  nopsForRegion,
+} from '../lib/locationHierarchy';
 
 /* ─── Mini Toast component ─── */
 type ToastType = 'success' | 'error';
@@ -83,9 +89,19 @@ export default function Register() {
   const [area, setArea] = useState('');
   const [region, setRegion] = useState('');
   const [nop, setNop] = useState('');
+  const [hierarchy, setHierarchy] = useState<LocationHierarchy | null>(null);
   const [loading, setLoading] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [toast, setToast] = useState<{ type: ToastType; message: string } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${API_BASE}/auth/location-hierarchy`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => { if (!cancelled && data) setHierarchy(data); })
+      .catch(() => { /* dropdowns just stay empty; submit still works */ });
+    return () => { cancelled = true; };
+  }, []);
 
   const showToast = (type: ToastType, message: string) => setToast({ type, message });
 
@@ -359,41 +375,52 @@ export default function Register() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
               <div>
                 <label style={labelStyle}>Area</label>
-                <input
-                  type="text"
+                <select
                   value={area}
-                  onChange={e => setArea(e.target.value)}
-                  placeholder="e.g. Area Jabar"
+                  onChange={e => { setArea(e.target.value); setRegion(''); setNop(''); }}
                   style={inputStyle}
                   onFocus={e => (e.currentTarget.style.borderColor = '#6a5c4f')}
                   onBlur={e => (e.currentTarget.style.borderColor = '#47413a')}
-                />
+                >
+                  <option value="" style={{ background: '#232220' }}>— Pilih Area —</option>
+                  {areaNames(hierarchy).map(a => (
+                    <option key={a} value={a} style={{ background: '#232220' }}>{a}</option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label style={labelStyle}>Region</label>
-                <input
-                  type="text"
+                <select
                   value={region}
-                  onChange={e => setRegion(e.target.value)}
-                  placeholder="e.g. R3 Jakarta Banten"
+                  onChange={e => { setRegion(e.target.value); setNop(''); }}
+                  disabled={!area}
                   style={inputStyle}
                   onFocus={e => (e.currentTarget.style.borderColor = '#6a5c4f')}
                   onBlur={e => (e.currentTarget.style.borderColor = '#47413a')}
-                />
+                >
+                  <option value="" style={{ background: '#232220' }}>— Pilih Region —</option>
+                  {regionsForArea(hierarchy, area).map(r => (
+                    <option key={r} value={r} style={{ background: '#232220' }}>{r}</option>
+                  ))}
+                </select>
               </div>
             </div>
 
             <div>
               <label style={labelStyle}>NOP</label>
-              <input
-                type="text"
+              <select
                 value={nop}
                 onChange={e => setNop(e.target.value)}
-                placeholder="e.g. NOP Bandung"
+                disabled={!region}
                 style={inputStyle}
                 onFocus={e => (e.currentTarget.style.borderColor = '#6a5c4f')}
                 onBlur={e => (e.currentTarget.style.borderColor = '#47413a')}
-              />
+              >
+                <option value="" style={{ background: '#232220' }}>— Pilih NOP —</option>
+                {nopsForRegion(hierarchy, area, region).map(n => (
+                  <option key={n} value={n} style={{ background: '#232220' }}>{n}</option>
+                ))}
+              </select>
             </div>
 
             {/* Submit */}

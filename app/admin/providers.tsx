@@ -49,14 +49,14 @@ export function Providers({ children }: { children: React.ReactNode }) {
             setRoleCookie(freshRole, 7);
             setAuthorized(true);
           } else {
-            router.replace("/chat");
+            router.replace("/chat?new=1");
           }
         } else {
           router.replace("/signin");
         }
       } catch (err) {
         console.error("Failed to verify user role with backend:", err);
-        router.replace("/chat"); // Safeguard: redirect to chat if check fails
+        router.replace("/chat?new=1"); // Safeguard: redirect to chat if check fails
       }
     };
 

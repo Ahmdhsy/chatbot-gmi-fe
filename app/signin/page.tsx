@@ -92,7 +92,9 @@ export default function SignIn() {
         }
 
         const isAdminOrAbove = role === 'superadmin' || role === 'admin';
-        const targetPath = isAdminOrAbove ? '/admin' : '/chat';
+        // ?new=1 tells the chat page to open a fresh conversation instead of
+        // resuming whatever was last active (see bootstrapHistory in app/chat/page.tsx).
+        const targetPath = isAdminOrAbove ? '/admin' : '/chat?new=1';
         const pageLabel = isAdminOrAbove ? 'dashboard admin' : 'chatbot';
 
         showToast('success', `Login berhasil! Mengarahkan ke halaman ${pageLabel}...`);

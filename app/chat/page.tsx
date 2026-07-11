@@ -14,7 +14,6 @@ import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import rehypeRaw from "rehype-raw";
 import RadioButtonCheckedIcon from "@mui/icons-material/RadioButtonChecked";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
@@ -1766,7 +1765,7 @@ function MarkdownMessage({ content }: { content: string }) {
       if (seg.kind === "prose") {
         if (!seg.text.trim()) return null;
         return (
-          <ReactMarkdown key={idx} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={MD_COMPONENTS}>
+          <ReactMarkdown key={idx} remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
             {seg.text}
           </ReactMarkdown>
         );
@@ -1778,7 +1777,7 @@ function MarkdownMessage({ content }: { content: string }) {
       const tableData = parseMdTableLines(seg.lines);
       if (!tableData) {
         return (
-          <ReactMarkdown key={idx} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={MD_COMPONENTS}>
+          <ReactMarkdown key={idx} remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
             {seg.lines.join("\n")}
           </ReactMarkdown>
         );
@@ -1787,7 +1786,7 @@ function MarkdownMessage({ content }: { content: string }) {
         return <VirtualPivotTable key={idx} data={tableData} />;
       }
       return (
-        <ReactMarkdown key={idx} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={MD_COMPONENTS}>
+        <ReactMarkdown key={idx} remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
           {seg.lines.join("\n")}
         </ReactMarkdown>
       );
@@ -1949,6 +1948,17 @@ export default function ChatPage() {
     };
 
     const bootstrapHistory = async (t: string, resolvedEmail: string) => {
+      // Set right after login (see app/signin/page.tsx) so the user lands on a
+      // brand-new conversation instead of resuming whatever was last active.
+      // Consumed once below, then stripped from the URL.
+      const isFreshStart = new URLSearchParams(window.location.search).get("new") === "1";
+      const stripFreshStartParam = () => {
+        if (!isFreshStart) return;
+        const url = new URL(window.location.href);
+        url.searchParams.delete("new");
+        window.history.replaceState({}, "", url.toString());
+      };
+
       try {
         const res = await apiFetch("/chat/langchain");
         if (res.ok) {
@@ -1989,7 +1999,13 @@ export default function ChatPage() {
             }
 
             let targetActiveId = mapped[0].id;
-            if (urlActiveId && mapped.some((c) => c.id === urlActiveId)) {
+            if (isFreshStart) {
+              const fresh = newConversation();
+              mapped.unshift(fresh);
+              targetActiveId = fresh.id;
+              loadedConvIdsRef.current.add(fresh.id);
+              setLoadedHistoryIds((prev) => new Set(prev).add(fresh.id));
+            } else if (urlActiveId && mapped.some((c) => c.id === urlActiveId)) {
               targetActiveId = urlActiveId;
             } else if (storedActiveId && mapped.some((c) => c.id === storedActiveId)) {
               targetActiveId = storedActiveId;
@@ -1998,6 +2014,7 @@ export default function ChatPage() {
             setConversations(mapped);
             setActiveId(targetActiveId);
             setHistoryReady(true);
+            stripFreshStartParam();
 
             // Update titles from latest human message in langchain_conversation_history (non-blocking)
             mapped.forEach(async (conv) => {
@@ -2041,23 +2058,25 @@ export default function ChatPage() {
 
       const storageKey = buildHistoryStorageKey(resolvedEmail);
       const stored = hydrateHistory(localStorage.getItem(storageKey));
-      if (stored?.conversations.length) {
+      if (stored?.conversations.length && !isFreshStart) {
         setConversations(stored.conversations);
         const queryParams = new URLSearchParams(window.location.search);
         const urlActiveId = queryParams.get("id");
         const hasUrlActive = urlActiveId && stored.conversations.some((c) => c.id === urlActiveId);
         const hasStoredActive = stored.conversations.some((c) => c.id === stored.activeId);
-        
+
         setActiveId(hasUrlActive ? urlActiveId : hasStoredActive ? stored.activeId : stored.conversations[0].id);
       } else {
-        // start with a fresh conversation
+        // start with a fresh conversation (also taken when isFreshStart, even
+        // if older conversations exist in localStorage — they stay in the list)
         const first = newConversation();
-        setConversations([first]);
+        setConversations(stored?.conversations.length ? [first, ...stored.conversations] : [first]);
         loadedConvIdsRef.current.add(first.id);
         setLoadedHistoryIds(new Set([first.id]));
         setActiveId(first.id);
       }
       setHistoryReady(true);
+      stripFreshStartParam();
     };
 
     const initAuth = async () => {

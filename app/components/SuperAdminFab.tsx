@@ -13,7 +13,9 @@ export default function SuperAdminFab({ mode }: SuperAdminFabProps) {
 
   const handleClick = () => {
     if (mode === "dashboard") {
-      router.push("/chat");
+      // ?new=1 opens a fresh conversation instead of resuming the last one
+      // (see bootstrapHistory in app/chat/page.tsx).
+      router.push("/chat?new=1");
     } else {
       router.push("/admin");
     }
