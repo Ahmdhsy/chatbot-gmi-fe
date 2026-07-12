@@ -6,6 +6,15 @@
 
 import { getAuthHeader } from "./auth";
 
+// In production the API base MUST come from the environment (e.g. the Cloudflare
+// Tunnel domain). Failing hard beats silently shipping a bundle that points at
+// localhost. NEXT_PUBLIC_* is inlined at build time, so this throws during build.
+if (process.env.NODE_ENV === "production" && !process.env.NEXT_PUBLIC_API_BASE) {
+  throw new Error(
+    "NEXT_PUBLIC_API_BASE must be set for production builds (e.g. https://your-domain/v1)"
+  );
+}
+
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8001/v1";
 

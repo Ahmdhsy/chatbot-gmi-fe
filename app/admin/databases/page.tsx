@@ -48,6 +48,56 @@ interface JobInfo {
   detail?: string;
 }
 
+interface MetricInfo {
+  base: string;
+  description: string;
+  aliases: string[];
+  sets: string[];
+  variantCount: number;
+  autoDiscovered: boolean;
+  overridden: boolean;
+}
+
+/** A business term naming a group of KPIs, e.g. "key driver". */
+interface MetricSet {
+  name: string;
+  label: string;
+  aliases: string[];
+  members: string[];
+}
+
+interface TableMetrics {
+  tableId: string;
+  tableName: string;
+  metrics: MetricInfo[];
+  sets: MetricSet[];
+}
+
+/** Editable fields of one metric row (aliases as comma-separated text). */
+interface MetricDraft {
+  description: string;
+  aliases: string;
+}
+
+/** Editable fields of one metric set. */
+interface SetDraft {
+  aliases: string;
+  members: string[];
+}
+
+const toDraft = (m: MetricInfo): MetricDraft => ({
+  description: m.description,
+  aliases: m.aliases.join(", "),
+});
+
+const toSetDraft = (s: MetricSet): SetDraft => ({
+  aliases: s.aliases.join(", "),
+  members: [...s.members],
+});
+
+const parseCsv = (text: string) =>
+  text.split(",").map((s) => s.trim()).filter(Boolean);
+
 const DB_TYPE_OPTIONS = ["postgresql", "mysql", "sqlserver", "oracle"];
 
 const INGESTION_MODES = [
@@ -199,6 +249,23 @@ export default function ManageDatabasesPage() {
   const [connToDelete, setConnToDelete] = useState<ConnectionType | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // Manage Metrics modal
+  const [metricsConn, setMetricsConn] = useState<ConnectionType | null>(null);
+  const [metricTables, setMetricTables] = useState<TableMetrics[]>([]);
+  const [metricsTableId, setMetricsTableId] = useState("");
+  const [metricsLoading, setMetricsLoading] = useState(false);
+  const [metricsError, setMetricsError] = useState<string | null>(null);
+  const [metricDrafts, setMetricDrafts] = useState<Record<string, MetricDraft>>({});
+  const [metricSaving, setMetricSaving] = useState<Record<string, boolean>>({});
+  const [metricSaved, setMetricSaved] = useState<Record<string, boolean>>({});
+  // Metric set editor (inside the same modal)
+  const [setDrafts, setSetDrafts] = useState<Record<string, SetDraft>>({});
+  const [newSetName, setNewSetName] = useState("");
+  const [setSaving, setSetSaving] = useState<Record<string, boolean>>({});
+  const [expandedSet, setExpandedSet] = useState<string | null>(null);
+
+  const currentTable = metricTables.find((t) => t.tableId === metricsTableId);
 
   const fetchConnections = useCallback(async () => {
     try {
@@ -370,6 +437,145 @@ export default function ManageDatabasesPage() {
       }
     } catch {
       setTablesError("Terjadi kesalahan jaringan.");
+    }
+  };
+
+  // ── Manage Metrics ─────────────────────────────────────────────────────────
+
+  const selectMetricsTable = (tables: TableMetrics[], tableId: string) => {
+    setMetricsTableId(tableId);
+    const table = tables.find((t) => t.tableId === tableId);
+    setMetricDrafts(
+      Object.fromEntries((table?.metrics ?? []).map((m) => [m.base, toDraft(m)])),
+    );
+    setSetDrafts(
+      Object.fromEntries((table?.sets ?? []).map((s) => [s.name, toSetDraft(s)])),
+    );
+    setMetricSaved({});
+  };
+
+  const reloadMetrics = async (connectionId: string, keepTableId: string) => {
+    const res = await apiFetch(`/databases/connections/${connectionId}/metrics`);
+    if (!res.ok) return;
+    const body: TableMetrics[] = await res.json();
+    setMetricTables(body);
+    const stillThere = body.some((t) => t.tableId === keepTableId);
+    selectMetricsTable(body, stillThere ? keepTableId : (body[0]?.tableId ?? ""));
+  };
+
+  /** Create a set, or save an existing set's aliases + member columns. */
+  const handleSaveSet = async (name: string, draft?: SetDraft) => {
+    const key = name.trim();
+    if (!metricsConn || !metricsTableId || !key) return;
+    setSetSaving((prev) => ({ ...prev, [key]: true }));
+    setMetricsError(null);
+    try {
+      const res = await apiFetch(
+        `/databases/tables/${metricsTableId}/metric-sets/${key}`,
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            label: key,
+            ...(draft
+              ? { aliases: parseCsv(draft.aliases), members: draft.members }
+              : {}),
+          }),
+        },
+      );
+      if (res.ok) {
+        if (!draft) setNewSetName("");
+        await reloadMetrics(metricsConn.connectionId, metricsTableId);
+      } else {
+        const body = await res.json().catch(() => null);
+        setMetricsError(body?.detail ?? `Gagal menyimpan set (status ${res.status}).`);
+      }
+    } catch {
+      setMetricsError("Terjadi kesalahan jaringan.");
+    } finally {
+      setSetSaving((prev) => ({ ...prev, [key]: false }));
+    }
+  };
+
+  const handleDeleteSet = async (name: string) => {
+    if (!metricsConn || !metricsTableId) return;
+    setSetSaving((prev) => ({ ...prev, [name]: true }));
+    try {
+      const res = await apiFetch(
+        `/databases/tables/${metricsTableId}/metric-sets/${name}`,
+        { method: "DELETE" },
+      );
+      if (res.ok) {
+        if (expandedSet === name) setExpandedSet(null);
+        await reloadMetrics(metricsConn.connectionId, metricsTableId);
+      } else {
+        const body = await res.json().catch(() => null);
+        setMetricsError(body?.detail ?? `Gagal menghapus set (status ${res.status}).`);
+      }
+    } catch {
+      setMetricsError("Terjadi kesalahan jaringan.");
+    } finally {
+      setSetSaving((prev) => ({ ...prev, [name]: false }));
+    }
+  };
+
+  const handleOpenMetrics = async (conn: ConnectionType) => {
+    setMetricsConn(conn);
+    setMetricTables([]);
+    setMetricsError(null);
+    setMetricsLoading(true);
+    try {
+      const res = await apiFetch(`/databases/connections/${conn.connectionId}/metrics`);
+      const body = await res.json().catch(() => null);
+      if (res.ok) {
+        setMetricTables(body);
+        if (body.length > 0) selectMetricsTable(body, body[0].tableId);
+      } else {
+        setMetricsError(body?.detail ?? `Gagal mengambil metric catalog (status ${res.status}).`);
+      }
+    } catch {
+      setMetricsError("Terjadi kesalahan jaringan.");
+    } finally {
+      setMetricsLoading(false);
+    }
+  };
+
+  const handleSaveMetric = async (metric: MetricInfo) => {
+    const draft = metricDrafts[metric.base];
+    if (!draft) return;
+
+    // Only send fields the admin actually changed, so untouched fields keep
+    // following the generated catalog on future syncs.
+    const aliases = parseCsv(draft.aliases);
+    const payload: Record<string, unknown> = {};
+    if (draft.description !== metric.description) payload.description = draft.description;
+    if (aliases.join("|") !== metric.aliases.join("|")) payload.aliases = aliases;
+    if (Object.keys(payload).length === 0) return;
+
+    setMetricSaving((prev) => ({ ...prev, [metric.base]: true }));
+    setMetricsError(null);
+    try {
+      const res = await apiFetch(
+        `/databases/tables/${metricsTableId}/metrics/${metric.base}`,
+        { method: "PATCH", body: JSON.stringify(payload) },
+      );
+      const body = await res.json().catch(() => null);
+      if (res.ok) {
+        setMetricTables((prev) =>
+          prev.map((t) =>
+            t.tableId === metricsTableId
+              ? { ...t, metrics: t.metrics.map((m) => (m.base === metric.base ? body : m)) }
+              : t,
+          ),
+        );
+        setMetricSaved((prev) => ({ ...prev, [metric.base]: true }));
+        setTimeout(() => setMetricSaved((prev) => ({ ...prev, [metric.base]: false })), 2000);
+      } else {
+        setMetricsError(body?.detail ?? `Gagal menyimpan metric (status ${res.status}).`);
+      }
+    } catch {
+      setMetricsError("Terjadi kesalahan jaringan.");
+    } finally {
+      setMetricSaving((prev) => ({ ...prev, [metric.base]: false }));
     }
   };
 
@@ -588,6 +794,13 @@ export default function ManageDatabasesPage() {
                             Sync Catalog
                           </button>
                           <button
+                            onClick={() => handleOpenMetrics(conn)}
+                            className="rounded-lg bg-[#219653]/10 px-3 py-1.5 text-xs font-semibold text-[#219653] hover:bg-[#219653]/20 transition-colors"
+                            title="Edit deskripsi, alias istilah bisnis, dan flag report/key-driver per KPI"
+                          >
+                            Manage Metrics
+                          </button>
+                          <button
                             onClick={() => { setConnToDelete(conn); setDeleteError(null); }}
                             className="rounded p-1.5 text-red-500 hover:bg-red-500/10 transition-colors"
                             title="Delete Connection"
@@ -769,6 +982,250 @@ export default function ManageDatabasesPage() {
                 Start Ingestion
               </button>
             </div>
+          </div>
+        </ModalShell>
+      )}
+
+      {/* Manage Metrics Modal */}
+      {metricsConn && (
+        <ModalShell title={`Manage Metrics — ${metricsConn.name}`} onClose={() => setMetricsConn(null)} wide>
+          <div className="mt-4 flex flex-col gap-4">
+            {metricsError && (
+              <div className="rounded-lg bg-red-500/10 p-3 text-sm font-medium text-red-500 dark:bg-red-500/5">
+                {metricsError}
+              </div>
+            )}
+
+            {metricsLoading ? (
+              <div className="flex h-32 items-center justify-center">
+                <div className="h-8 w-8 animate-spin rounded-full border-4 border-solid border-primary border-t-transparent" />
+              </div>
+            ) : (
+              <>
+                {metricTables.length > 1 && (
+                  <Field label="Tabel">
+                    <select
+                      value={metricsTableId}
+                      onChange={(e) => selectMetricsTable(metricTables, e.target.value)}
+                      className={inputClass}
+                    >
+                      {metricTables.map((t) => (
+                        <option key={t.tableId} value={t.tableId} className="dark:bg-[#232220]">
+                          {t.tableName}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
+
+                <p className="text-xs text-gray-500 dark:text-[#8f8f8a]">
+                  <b>Set</b> = istilah bisnis untuk SEKELOMPOK kolom (mis.{" "}
+                  <span className="font-mono">key driver</span> = PGB + RGB + RGB Data) —
+                  buka sebuah set untuk memilih kolom anggotanya dan mengatur aliasnya.{" "}
+                  <b>Alias metric</b> (di daftar bawah) = istilah bisnis untuk SATU kolom
+                  (mis. <span className="font-mono">payload user</span>).
+                  Perubahan langsung dipakai chatbot dan tetap tersimpan saat Sync Catalog.
+                </p>
+
+                {/* Metric sets — each set picks its own member columns */}
+                <Field label="Metric Sets">
+                  <div className="flex flex-col gap-2 rounded-lg border border-stroke p-3 dark:border-dark-3">
+                    {(currentTable?.sets ?? []).map((s) => {
+                      const draft = setDrafts[s.name];
+                      const open = expandedSet === s.name;
+                      return (
+                        <div key={s.name} className="rounded-lg border border-stroke dark:border-dark-3">
+                          <div className="flex items-center gap-2 p-2">
+                            <button
+                              type="button"
+                              onClick={() => setExpandedSet(open ? null : s.name)}
+                              className="flex flex-1 items-center gap-2 text-left"
+                            >
+                              <svg
+                                xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+                                strokeWidth={2} stroke="currentColor"
+                                className={cn("h-3.5 w-3.5 shrink-0 text-gray-500 transition-transform", open && "rotate-90")}
+                              >
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                              </svg>
+                              <span className="font-mono text-xs font-semibold text-dark dark:text-white">
+                                {s.name}
+                              </span>
+                              <span className="text-xs text-gray-500 dark:text-[#8f8f8a]">
+                                {s.members.length} kolom
+                                {s.members.length > 0 && ` · ${s.members.join(", ")}`}
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteSet(s.name)}
+                              disabled={setSaving[s.name]}
+                              className="shrink-0 rounded p-1.5 text-red-500 hover:bg-red-500/10 disabled:opacity-50 transition-colors"
+                              title={`Hapus set ${s.name}`}
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="h-4 w-4">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            </button>
+                          </div>
+
+                          {open && draft && (
+                            <div className="flex flex-col gap-2.5 border-t border-stroke p-3 dark:border-dark-3">
+                              <Field label="Aliases (comma-separated)">
+                                <input
+                                  type="text"
+                                  placeholder="e.g. key driver, driver utama"
+                                  value={draft.aliases}
+                                  onChange={(e) =>
+                                    setSetDrafts((prev) => ({
+                                      ...prev,
+                                      [s.name]: { ...prev[s.name], aliases: e.target.value },
+                                    }))
+                                  }
+                                  className={cn(inputClass, "py-1.5 text-xs")}
+                                />
+                              </Field>
+
+                              <Field label={`Kolom anggota (${draft.members.length} dipilih)`}>
+                                <div className="max-h-44 overflow-y-auto rounded-lg border border-stroke dark:border-dark-3">
+                                  {(currentTable?.metrics ?? []).map((m) => (
+                                    <label
+                                      key={m.base}
+                                      className="flex cursor-pointer items-center gap-2.5 border-b border-stroke px-3 py-1.5 last:border-b-0 hover:bg-gray-50 dark:border-dark-3 dark:hover:bg-[#2d2a27]"
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={draft.members.includes(m.base)}
+                                        onChange={(e) =>
+                                          setSetDrafts((prev) => ({
+                                            ...prev,
+                                            [s.name]: {
+                                              ...prev[s.name],
+                                              members: e.target.checked
+                                                ? [...prev[s.name].members, m.base]
+                                                : prev[s.name].members.filter((b) => b !== m.base),
+                                            },
+                                          }))
+                                        }
+                                        className="h-4 w-4 accent-[#FE6C11]"
+                                      />
+                                      <span className="font-mono text-xs font-medium text-dark dark:text-white">
+                                        {m.base}
+                                      </span>
+                                      <span className="truncate text-xs text-gray-500 dark:text-[#8f8f8a]" title={m.description}>
+                                        {m.description}
+                                      </span>
+                                    </label>
+                                  ))}
+                                </div>
+                              </Field>
+
+                              <div className="flex justify-end">
+                                <button
+                                  type="button"
+                                  onClick={() => handleSaveSet(s.name, draft)}
+                                  disabled={setSaving[s.name]}
+                                  className="rounded-lg bg-[#FE6C11] px-4 py-1.5 text-xs font-semibold text-white hover:bg-[#e05b0a] disabled:opacity-50 transition-colors"
+                                >
+                                  {setSaving[s.name] ? "Saving..." : "Save Set"}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    <div className="flex items-center gap-2 border-t border-stroke pt-2 dark:border-dark-3">
+                      <input
+                        type="text"
+                        placeholder="nama set baru, mis. trafik"
+                        value={newSetName}
+                        onChange={(e) => setNewSetName(e.target.value)}
+                        className={cn(inputClass, "py-1.5 text-xs")}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleSaveSet(newSetName)}
+                        disabled={setSaving[newSetName.trim()] || !newSetName.trim()}
+                        className="shrink-0 rounded-lg bg-[#219653] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#1b7a44] disabled:opacity-50 transition-colors"
+                      >
+                        + Set
+                      </button>
+                    </div>
+                  </div>
+                </Field>
+
+                <div className="max-h-[420px] overflow-y-auto rounded-lg border border-stroke dark:border-dark-3">
+                  {(currentTable?.metrics ?? []).map((m) => {
+                    const draft = metricDrafts[m.base];
+                    if (!draft) return null;
+                    return (
+                      <div key={m.base} className="border-b border-stroke p-4 last:border-b-0 dark:border-dark-3">
+                        <div className="mb-2 flex items-center gap-2">
+                          <span className="font-mono text-sm font-semibold text-dark dark:text-white">{m.base}</span>
+                          <span className="text-xs text-gray-500 dark:text-[#8f8f8a]">{m.variantCount} kolom</span>
+                          {m.autoDiscovered && <StatusPill tone="yellow">auto</StatusPill>}
+                          {m.overridden && <StatusPill tone="green">edited</StatusPill>}
+                        </div>
+
+                        <div className="flex flex-col gap-2.5">
+                          <Field label="Description">
+                            <input
+                              type="text"
+                              value={draft.description}
+                              onChange={(e) =>
+                                setMetricDrafts((prev) => ({
+                                  ...prev,
+                                  [m.base]: { ...prev[m.base], description: e.target.value },
+                                }))
+                              }
+                              className={inputClass}
+                            />
+                          </Field>
+                          <Field label="Aliases (comma-separated)">
+                            <input
+                              type="text"
+                              placeholder="e.g. payload user, paying user data"
+                              value={draft.aliases}
+                              onChange={(e) =>
+                                setMetricDrafts((prev) => ({
+                                  ...prev,
+                                  [m.base]: { ...prev[m.base], aliases: e.target.value },
+                                }))
+                              }
+                              className={inputClass}
+                            />
+                          </Field>
+
+                          <div className="flex items-center justify-between gap-4">
+                            <span className="truncate text-xs text-gray-500 dark:text-[#8f8f8a]">
+                              {m.sets.length > 0
+                                ? `Anggota set: ${m.sets.join(", ")}`
+                                : "Belum masuk set manapun"}
+                            </span>
+
+                            <div className="flex shrink-0 items-center gap-2">
+                              {metricSaved[m.base] && (
+                                <span className="text-xs font-medium text-[#219653]">Saved ✓</span>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleSaveMetric(m)}
+                                disabled={metricSaving[m.base]}
+                                className="rounded-lg bg-[#FE6C11] px-4 py-1.5 text-xs font-semibold text-white hover:bg-[#e05b0a] disabled:opacity-50 transition-colors"
+                              >
+                                {metricSaving[m.base] ? "Saving..." : "Save"}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
           </div>
         </ModalShell>
       )}

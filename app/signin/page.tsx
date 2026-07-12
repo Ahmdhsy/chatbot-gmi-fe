@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
+import { API_BASE } from '../lib/api';
 import { getAccessTokenFromCookie, setAccessTokenCookie, setRoleCookie, setUserIdCookie } from '../lib/auth';
 
 /* ─── Mini Toast component ─── */
@@ -43,8 +44,6 @@ function Toast({ type, message, onClose }: ToastProps) {
     </div>
   );
 }
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:8001/v1';
 
 export default function SignIn() {
   const [showPassword, setShowPassword] = useState(false);
