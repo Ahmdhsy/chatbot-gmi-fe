@@ -1469,6 +1469,53 @@ const VIRTUAL_TABLE_THRESHOLD = 30;
 const VIRTUAL_ROW_H = 38;
 const VIRTUAL_VIEWPORT_H = 520;
 
+/* ── Export table to Excel ──
+   Real .xlsx via SheetJS (no Excel format-mismatch warning). Accepts an HTML
+   fragment with one or more <table> (plus optional <p> captions); tables are
+   stacked in one sheet, rowspan/colspan become merged cells. Dynamically
+   imported so the chat bundle doesn't carry SheetJS until first export. */
+async function exportTableToExcel(tableHtml: string, filename = "report") {
+  const XLSX = await import("xlsx");
+  const container = document.createElement("div");
+  container.innerHTML = tableHtml;
+  let ws: import("xlsx").WorkSheet | null = null;
+  for (const el of Array.from(container.children)) {
+    if (el.tagName === "TABLE") {
+      if (!ws) {
+        ws = XLSX.utils.table_to_sheet(el);
+      } else {
+        XLSX.utils.sheet_add_aoa(ws, [[""]], { origin: -1 });
+        XLSX.utils.sheet_add_dom(ws, el as HTMLElement, { origin: -1 });
+      }
+    } else {
+      const text = el.textContent?.trim();
+      if (!text) continue;
+      if (!ws) ws = XLSX.utils.aoa_to_sheet([[text]]);
+      else XLSX.utils.sheet_add_aoa(ws, [[""], [text]], { origin: -1 });
+    }
+  }
+  if (!ws) return;
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Report");
+  XLSX.writeFile(wb, `${filename}-${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
+function mdTableToHtml(data: ParsedTableData): string {
+  const esc = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const head = data.headers.map((h) => `<th>${esc(h)}</th>`).join("");
+  const body = data.rows
+    .map((r) => `<tr>${data.headers.map((_, i) => `<td>${esc(r[i] ?? "")}</td>`).join("")}</tr>`)
+    .join("");
+  return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+const EXPORT_BTN_STYLE: React.CSSProperties = {
+  background: "transparent", border: "1px solid #4a4a4a", color: "#c9c3b6",
+  borderRadius: 6, padding: "3px 10px", fontSize: "0.72rem", cursor: "pointer",
+  whiteSpace: "nowrap", flexShrink: 0,
+};
+
 function VirtualPivotTable({ data }: { data: ParsedTableData }) {
   const [scrollTop, setScrollTop] = useState(0);
   const totalRows = data.rows.length;
@@ -1514,8 +1561,11 @@ function VirtualPivotTable({ data }: { data: ParsedTableData }) {
           </tbody>
         </table>
       </div>
-      <div style={{ padding: "5px 12px", fontSize: "0.74rem", color: "#888", borderTop: "1px solid #343434", background: "#232323" }}>
-        {totalRows} baris · {data.headers.length} kolom · scroll untuk melihat semua data
+      <div style={{ padding: "5px 12px", fontSize: "0.74rem", color: "#888", borderTop: "1px solid #343434", background: "#232323", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <span>{totalRows} baris · {data.headers.length} kolom · scroll untuk melihat semua data</span>
+        <button style={EXPORT_BTN_STYLE} onClick={() => exportTableToExcel(mdTableToHtml(data))}>
+          ⬇ Export Excel
+        </button>
       </div>
     </div>
   );
@@ -1640,8 +1690,11 @@ function VirtualHtmlPivotTable({ html }: { html: string }) {
           </tbody>
         </table>
       </div>
-      <div style={{ padding: "5px 12px", fontSize: "0.74rem", color: "#888", borderTop: "1px solid #343434", background: "#232323" }}>
-        {totalRows} baris · {totalCols} kolom · scroll untuk melihat semua data
+      <div style={{ padding: "5px 12px", fontSize: "0.74rem", color: "#888", borderTop: "1px solid #343434", background: "#232323", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <span>{totalRows} baris · {totalCols} kolom · scroll untuk melihat semua data</span>
+        <button style={EXPORT_BTN_STYLE} onClick={() => exportTableToExcel(html)}>
+          ⬇ Export Excel
+        </button>
       </div>
     </div>
   );
@@ -1760,6 +1813,42 @@ function MarkdownMessage({ content }: { content: string }) {
     : [];
   const hasInsightCards = !!insight && insightCards.length > 0;
 
+  // Combined export: stack every table in this answer into one sheet, each
+  // preceded by the nearest heading line above it (e.g. "NATIONWIDE — per FM ...").
+  const combinedExportHtml = React.useMemo(() => {
+    const escText = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    const parts: string[] = [];
+    let lastProse = "";
+    for (const seg of segments) {
+      if (seg.kind === "prose") { lastProse = seg.text; continue; }
+      let tableHtml = "";
+      if (seg.kind === "html_table") {
+        tableHtml = seg.html;
+      } else {
+        const d = parseMdTableLines(seg.lines);
+        if (d) tableHtml = mdTableToHtml(d);
+      }
+      if (!tableHtml) continue;
+      const caption = (lastProse.trim().split("\n").pop() || "")
+        .replace(/[#*_`]/g, "")
+        .trim();
+      lastProse = "";
+      parts.push((caption ? `<p><b>${escText(caption)}</b></p>` : "") + tableHtml);
+    }
+    return parts.length >= 2 ? parts.join("<br/>") : "";
+  }, [segments]);
+
+  const exportAllBtn = combinedExportHtml ? (
+    <div style={{ display: "flex", justifyContent: "flex-end" }}>
+      <button
+        style={EXPORT_BTN_STYLE}
+        onClick={() => exportTableToExcel(combinedExportHtml, "report-gabungan")}
+      >
+        ⬇ Export semua tabel ke Excel
+      </button>
+    </div>
+  ) : null;
+
   const renderSegments = (segs: MdSegment[]) =>
     segs.map((seg, idx) => {
       if (seg.kind === "prose") {
@@ -1812,6 +1901,7 @@ function MarkdownMessage({ content }: { content: string }) {
           </div>
         </div>
         {renderSegments(afterSegs)}
+        {exportAllBtn}
       </div>
     );
   }
@@ -1819,6 +1909,7 @@ function MarkdownMessage({ content }: { content: string }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       {renderSegments(segments)}
+      {exportAllBtn}
     </div>
   );
 }
@@ -1969,16 +2060,40 @@ export default function ChatPage() {
               ? (data as LangchainConversationListResponse).conversations ?? []
               : [];
           if (items.length > 0) {
+            // Local storage keeps the FULL rendered messages (pivot tables + real
+            // numbers); server history only stores the compact, number-free
+            // narrative meant for LLM context. Reuse local messages on refresh so
+            // tables survive; server history stays the fallback (other device /
+            // cleared storage).
+            const storageKey = buildHistoryStorageKey(resolvedEmail);
+            let storedActiveId = "";
+            const storedByApiId = new Map<string, Conversation>();
+            try {
+              const stored = hydrateHistory(localStorage.getItem(storageKey));
+              if (stored) {
+                storedActiveId = stored.activeId;
+                for (const c of stored.conversations) {
+                  const key = c.apiConversationId ?? c.id;
+                  if (key) storedByApiId.set(key, c);
+                }
+              }
+            } catch {
+              // ignore
+            }
+
             const mapped = items.map((item) => {
               const conversationId = String(
                 item.conversationId ?? item.id ?? item.session_id ?? item.sessionId ?? ""
               );
-              const fallbackTitle = "Riwayat chat";
+              // ponytail: local messages may be stale if the user chatted on
+              // another device; acceptable — server fetch still covers convs
+              // without local messages (see loadHistory).
+              const local = conversationId ? storedByApiId.get(conversationId) : undefined;
               return {
                 id: conversationId || uid(),
                 apiConversationId: conversationId || undefined,
-                title: fallbackTitle,
-                messages: [],
+                title: local?.title ?? "Riwayat chat",
+                messages: local?.messages ?? [],
                 createdAt: item.lastActivity
                   ? new Date(item.lastActivity)
                   : item.last_activity
@@ -1989,14 +2104,6 @@ export default function ChatPage() {
             // Choose the active ID: URL query parameter first, then localStorage, then default to first conversation
             const queryParams = new URLSearchParams(window.location.search);
             const urlActiveId = queryParams.get("id");
-            const storageKey = buildHistoryStorageKey(resolvedEmail);
-            let storedActiveId = "";
-            try {
-              const stored = hydrateHistory(localStorage.getItem(storageKey));
-              if (stored) storedActiveId = stored.activeId;
-            } catch {
-              // ignore
-            }
 
             let targetActiveId = mapped[0].id;
             if (isFreshStart) {
@@ -2843,8 +2950,8 @@ export default function ChatPage() {
       {/* Toast */}
       {toast && <Toast {...toast} onClose={() => setToast(null)} />}
 
-      {/* Floating Redirect Button for SuperAdmin */}
-      {userRole === "superadmin" && <SuperAdminFab mode="chat" />}
+      {/* Floating redirect to dashboard — same roles the /admin guard accepts */}
+      {(userRole === "admin" || userRole === "superadmin") && <SuperAdminFab mode="chat" />}
 
       {/* ══════════ SIDEBAR COMPONENT ══════════ */}
       <Sidebar
