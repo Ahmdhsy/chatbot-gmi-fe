@@ -104,6 +104,7 @@ interface LangchainHistoryItem {
   answer?: string;
   timestamp?: string | null;
   chart?: Record<string, unknown> | null;
+  charts?: Record<string, unknown>[] | null;
   data?: Record<string, unknown> | null;
   evidence?: Record<string, unknown>[];
   suggestions?: string[];
@@ -1025,6 +1026,7 @@ function normalizeHistoryMessages(raw: unknown): Message[] {
         content: item.answer,
         createdAt: timestamp,
         chart: item.chart ?? null,
+        charts: Array.isArray(item.charts) ? item.charts : null,
         data: item.data ?? null,
         evidence: item.evidence ?? undefined,
         suggestions: item.suggestions ?? undefined,
@@ -2693,6 +2695,20 @@ export default function ChatPage() {
       )
     );
 
+    // Update isi bubble assistant (status tunggu / pesan error)
+    const setAssistantBubble = (content: string) => {
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id !== activeId ? c : {
+            ...c,
+            messages: c.messages.map((m) =>
+              m.id === assistantId ? { ...m, content } : m
+            ),
+          }
+        )
+      );
+    };
+
     try {
       const reqBody: ChatApiRequest = {
         message: trimmed,
@@ -2824,16 +2840,37 @@ export default function ChatPage() {
       }
 
       // ── Standard JSON mode ──
-      const res = await apiFetch("/chat", {
+      let res = await apiFetch("/chat", {
         method: "POST",
         body: JSON.stringify(reqBody),
       });
+
+      // 503 = pagar kapasitas server penuh (CHAT_MAX_CONCURRENT). Server memberi
+      // Retry-After — tunggu lalu coba ulang otomatis (maks 2x) sebelum menyerah.
+      for (let attempt = 1; res.status === 503 && attempt <= 2; attempt++) {
+        const wait = Math.min(Math.max(Number(res.headers.get("Retry-After")) || 15, 3), 30);
+        setAssistantBubble(
+          `⏳ Server sedang sibuk melayani banyak percakapan — mencoba lagi otomatis dalam ${wait} detik (percobaan ${attempt}/2)...`
+        );
+        await new Promise((r) => setTimeout(r, wait * 1000));
+        res = await apiFetch("/chat", {
+          method: "POST",
+          body: JSON.stringify(reqBody),
+        });
+      }
 
       // ── Error handling ──
       if (!res.ok) {
         let reason = `Error ${res.status}`;
         const body = await res.json().catch(() => null);
-        if (res.status === 422) {
+        if (res.status === 503) {
+          reason = "Server masih sibuk melayani banyak percakapan. Pertanyaanmu tidak hilang — coba kirim ulang beberapa saat lagi ya.";
+        } else if (res.status === 429) {
+          // Rate limit per-user / kuota token — backend sudah memberi pesan ramah + Retry-After
+          reason = typeof body?.detail === "string"
+            ? body.detail
+            : "Terlalu banyak permintaan. Tunggu sebentar lalu coba lagi.";
+        } else if (res.status === 422) {
           const detail = body?.detail;
           if (Array.isArray(detail)) {
             // Tampilkan SEMUA info error dari FastAPI agar mudah debug
@@ -2856,16 +2893,7 @@ export default function ChatPage() {
           reason = typeof body?.detail === "string" ? body.detail : (JSON.stringify(body) ?? reason);
         }
 
-        setConversations((prev) =>
-          prev.map((c) =>
-            c.id !== activeId ? c : {
-              ...c,
-              messages: c.messages.map((m) =>
-                m.id === assistantId ? { ...m, content: `⚠ ${reason}` } : m
-              ),
-            }
-          )
-        );
+        setAssistantBubble(`⚠ ${reason}`);
         setToast({ type: "error", message: reason });
         return;
       }
@@ -2906,16 +2934,7 @@ export default function ChatPage() {
       const msg = errMsg === "Failed to fetch"
         ? "Tidak dapat menghubungi server. Pastikan backend berjalan di port 8001."
         : (errMsg || "Terjadi kesalahan jaringan.");
-      setConversations((prev) =>
-        prev.map((c) =>
-          c.id !== activeId ? c : {
-            ...c,
-            messages: c.messages.map((m) =>
-              m.id === assistantId ? { ...m, content: `⚠ ${msg}` } : m
-            ),
-          }
-        )
-      );
+      setAssistantBubble(`⚠ ${msg}`);
       setToast({ type: "error", message: msg });
     } finally {
       setStreaming(false);

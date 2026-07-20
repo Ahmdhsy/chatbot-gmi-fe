@@ -30,29 +30,10 @@ interface InsightData {
     total_tokens: number;
     conversations: number;
   }[];
-  topics: { type: string; count: number }[];
+  top_metrics: { metric: string; count: number }[];
   avg_quality_score: number;
   top_questions: { question: string; count: number }[];
 }
-
-const TOPIC_LABELS: Record<string, string> = {
-  factual: "Faktual",
-  analytical: "Analitis",
-  conversational: "Percakapan",
-  comparison: "Perbandingan",
-  chart_request: "Grafik",
-  general: "Umum",
-  unknown: "Tidak Diketahui",
-};
-
-const TOPIC_COLORS = [
-  "#FE6C11",
-  "#FF883F",
-  "#FFA66D",
-  "#FFC39B",
-  "#E05B0A",
-  "#FFE0CB",
-];
 
 const fmt = (n: number) => n.toLocaleString("id-ID");
 
@@ -135,50 +116,37 @@ export default function AdminDashboard() {
     },
   };
 
-  // Chart: topic donut
-  const topicLabels = insights.topics.map(
-    (t) => TOPIC_LABELS[t.type] ?? t.type
-  );
-  const topicCounts = insights.topics.map((t) => t.count);
+  // Chart: top KPI metrics (horizontal bar)
+  const metricLabels = insights.top_metrics.map((m) => m.metric);
+  const metricCounts = insights.top_metrics.map((m) => m.count);
 
-  const donutOptions: ApexOptions = {
-    chart: { type: "donut", fontFamily: "inherit" },
-    colors: TOPIC_COLORS,
-    labels: topicLabels,
-    legend: {
-      show: true,
-      position: "bottom",
-      fontFamily: "inherit",
-      fontSize: "13px",
-      itemMargin: { horizontal: 8, vertical: 4 },
-    },
+  const metricOptions: ApexOptions = {
+    chart: { type: "bar", toolbar: { show: false }, fontFamily: "inherit" },
+    colors: ["#FE6C11"],
     plotOptions: {
-      pie: {
-        donut: {
-          size: "75%",
-          labels: {
-            show: true,
-            total: {
-              show: true,
-              showAlways: true,
-              label: "Total",
-              fontSize: "14px",
-              fontWeight: "400",
-            },
-            value: {
-              show: true,
-              fontSize: "26px",
-              fontWeight: "bold",
-              formatter: (val: string) => fmt(Number(val)),
-            },
-          },
-        },
-      },
+      bar: { horizontal: true, borderRadius: 4, barHeight: "60%", borderRadiusApplication: "end" },
     },
-    dataLabels: { enabled: false },
-    responsive: [
-      { breakpoint: 640, options: { chart: { width: "100%" } } },
-    ],
+    dataLabels: {
+      enabled: true,
+      formatter: (v: number) => fmt(v),
+      style: { fontSize: "12px", fontWeight: "600" },
+    },
+    grid: {
+      strokeDashArray: 5,
+      xaxis: { lines: { show: true } },
+      yaxis: { lines: { show: false } },
+    },
+    xaxis: {
+      categories: metricLabels,
+      axisBorder: { show: false },
+      axisTicks: { show: false },
+    },
+    yaxis: {
+      labels: { style: { fontSize: "13px", fontWeight: 500 } },
+    },
+    tooltip: {
+      y: { formatter: (v: number) => `${fmt(v)}x ditanyakan` },
+    },
   };
 
   const qualityColor =
@@ -263,25 +231,22 @@ export default function AdminDashboard() {
           )}
         </div>
 
-        {/* Topic Distribution */}
+        {/* Top KPI Metrics */}
         <div className="col-span-12 xl:col-span-5 rounded-[10px] bg-white px-7.5 pb-6 pt-7.5 shadow-1 dark:bg-gray-dark dark:shadow-card">
           <h3 className="mb-1 text-xl font-bold text-dark dark:text-white">
-            Topik Pertanyaan
+            KPI Terpopuler
           </h3>
-          <p className="mb-4 text-sm text-gray-500 dark:text-[#8f8f8a]">30 hari terakhir</p>
-          {topicCounts.length > 0 ? (
-            <div className="flex justify-center">
-              <Chart
-                options={donutOptions}
-                series={topicCounts}
-                type="donut"
-                height={320}
-                width={320}
-              />
-            </div>
+          <p className="mb-4 text-sm text-gray-500 dark:text-[#8f8f8a]">Metric yang paling sering ditanyakan (30 hari)</p>
+          {metricCounts.length > 0 ? (
+            <Chart
+              options={metricOptions}
+              series={[{ name: "Ditanyakan", data: metricCounts }]}
+              type="bar"
+              height={320}
+            />
           ) : (
             <div className="flex h-[320px] items-center justify-center text-gray-500 dark:text-[#8f8f8a]">
-              Belum ada data topik.
+              Belum ada data metric.
             </div>
           )}
         </div>
