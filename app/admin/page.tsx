@@ -310,6 +310,7 @@ export default function AdminDashboard() {
             </div>
           </div>
 
+          <div className="max-w-full overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow className="border-none bg-[#F7F9FC] dark:bg-dark-2 [&>th]:py-3 [&>th]:text-sm [&>th]:text-dark [&>th]:dark:text-white">
@@ -344,6 +345,7 @@ export default function AdminDashboard() {
               ))}
             </TableBody>
           </Table>
+          </div>
         </div>
       )}
 
@@ -355,6 +357,7 @@ export default function AdminDashboard() {
             Top 5 Pengguna
           </h3>
           <p className="mb-4 text-sm text-gray-500 dark:text-[#8f8f8a]">Berdasarkan total token (30 hari)</p>
+          <div className="max-w-full overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow className="border-none bg-[#F7F9FC] dark:bg-dark-2 [&>th]:py-3 [&>th]:text-sm [&>th]:text-dark [&>th]:dark:text-white">
@@ -400,6 +403,7 @@ export default function AdminDashboard() {
               )}
             </TableBody>
           </Table>
+          </div>
         </div>
 
         {/* Right Column: Top Questions + Quick Stats */}

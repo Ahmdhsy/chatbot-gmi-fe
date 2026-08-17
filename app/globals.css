@@ -7,6 +7,37 @@ layer(base);
 
 @import "../css/theme.css";
 
+/* Scrollbars, app-wide (chat + admin). The browser default is a thick, bright
+   bar that dominates dark surfaces. A neutral grey at low opacity reads as
+   muted on both light and dark backgrounds, so it works even where the theme
+   is hard-coded (the chat page) rather than driven by the `dark` class. */
+* {
+  scrollbar-width: thin;                          /* Firefox */
+  scrollbar-color: rgb(128 128 128 / 0.35) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgb(128 128 128 / 0.35);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(128 128 128 / 0.55);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 /* Root color & font variables */
 :root {
   --background: #ffffff;

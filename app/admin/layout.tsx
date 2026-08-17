@@ -29,7 +29,11 @@ export default function AdminLayout({ children }: PropsWithChildren) {
       <div className="flex min-h-screen">
         <Sidebar />
 
-        <div className="w-full bg-gray-2 dark:bg-[#171717]">
+        {/* min-w-0: a flex child defaults to min-width:auto, so a wide table
+            inside would refuse to shrink and push the sidebar off-screen
+            (visible as a squashed/missing sidebar at 90% zoom). With this the
+            column can shrink and the table's own overflow-x-auto scrolls. */}
+        <div className="w-full min-w-0 bg-gray-2 dark:bg-[#171717]">
           <Header />
 
           <main className="isolate mx-auto w-full max-w-screen-2xl overflow-hidden p-4 md:p-6 2xl:p-10">

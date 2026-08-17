@@ -19,21 +19,9 @@
     scrollbar-width: none; /* Firefox */
   }
 
-   .custom-scrollbar {
-    @apply overflow-auto;
-  }
-
-  .custom-scrollbar::-webkit-scrollbar {
-    @apply w-2 h-2;
-  }
-
-  .custom-scrollbar::-webkit-scrollbar-track {
-    @apply bg-transparent;
-  }
-
-  .custom-scrollbar::-webkit-scrollbar-thumb {
-    @apply relative flex-1 rounded-full bg-neutral-200/40 dark:bg-stroke-dark;
-  }
+  /* Scrollbar styling now lives in app/globals.css as a global rule, so it also
+     covers the chat page (which doesn't load this stylesheet) and containers
+     that use inline styles instead of classes. */
 
   
   .chat-height {
