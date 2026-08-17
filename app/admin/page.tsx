@@ -14,6 +14,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import dayjs from "dayjs";
 
 const Chart = dynamic(() => import("react-apexcharts"), { ssr: false });
@@ -35,11 +36,32 @@ interface InsightData {
   top_questions: { question: string; count: number }[];
 }
 
+interface ModelsData {
+  active_model: string;
+  provider: string;
+  models: {
+    model_name: string | null;
+    conversations: number;
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+    cost_usd: number;
+    cost_source: "configured" | "provider";
+  }[];
+}
+
 const fmt = (n: number) => n.toLocaleString("id-ID");
+
+const usd = (n: number) =>
+  `$${n.toLocaleString("en-US", {
+    minimumFractionDigits: n < 1 ? 4 : 2,
+    maximumFractionDigits: n < 1 ? 4 : 2,
+  })}`;
 
 export default function AdminDashboard() {
   const router = useRouter();
   const [insights, setInsights] = useState<InsightData | null>(null);
+  const [models, setModels] = useState<ModelsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
@@ -55,7 +77,18 @@ export default function AdminDashboard() {
     }
   }, []);
 
-  useEffect(() => { loadInsights(); }, [loadInsights]);
+  // Superadmin-only panel: let the backend decide (403 => stays hidden) rather
+  // than reading the role cookie, which can be stale.
+  const loadModels = useCallback(async () => {
+    try {
+      const res = await apiFetch("/token-usage/models?days=365");
+      setModels(res.ok ? await res.json() : null);
+    } catch {
+      // non-fatal — the rest of the dashboard still renders
+    }
+  }, []);
+
+  useEffect(() => { loadInsights(); loadModels(); }, [loadInsights, loadModels]);
 
   if (loading) {
     return (
@@ -251,6 +284,68 @@ export default function AdminDashboard() {
           )}
         </div>
       </div>
+
+      {/* Model LLM (superadmin only — hidden when the API returns 403) */}
+      {models && (
+        <div className="mb-6 rounded-[10px] bg-white px-7.5 pb-6 pt-7.5 shadow-1 dark:bg-gray-dark dark:shadow-card">
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="mb-1 text-xl font-bold text-dark dark:text-white">
+                Model LLM
+              </h3>
+              <p className="text-sm text-gray-500 dark:text-[#8f8f8a]">
+                Model yang dipakai &amp; biayanya (1 tahun terakhir)
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="rounded-full bg-[#FE6C11]/10 px-3 py-1 text-sm font-medium text-[#FE6C11]">
+                Aktif: {models.active_model}
+              </span>
+              <Link
+                href="/admin/token-usage"
+                className="rounded-lg border border-stroke px-3 py-1.5 text-xs font-semibold text-dark transition-colors hover:bg-gray-100 dark:border-dark-3 dark:text-white dark:hover:bg-[#2d2a27]"
+              >
+                Atur Harga
+              </Link>
+            </div>
+          </div>
+
+          <Table>
+            <TableHeader>
+              <TableRow className="border-none bg-[#F7F9FC] dark:bg-dark-2 [&>th]:py-3 [&>th]:text-sm [&>th]:text-dark [&>th]:dark:text-white">
+                <TableHead className="pl-4">Model</TableHead>
+                <TableHead className="text-right">Percakapan</TableHead>
+                <TableHead className="text-right">Token Input</TableHead>
+                <TableHead className="text-right">Token Output</TableHead>
+                <TableHead className="text-right pr-4">Biaya</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {models.models.map((m) => (
+                <TableRow key={m.model_name ?? "unknown"} className="border-b border-stroke dark:border-dark-3">
+                  <TableCell className="pl-4 font-medium text-dark dark:text-white">
+                    {m.model_name ?? "-"}
+                    {m.model_name === models.active_model && (
+                      <span className="ml-2 rounded bg-[#219653]/[0.08] px-2 py-0.5 text-xs font-medium text-[#219653]">
+                        aktif
+                      </span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right text-dark dark:text-white">{fmt(m.conversations)}</TableCell>
+                  <TableCell className="text-right text-dark dark:text-white">{fmt(m.input_tokens)}</TableCell>
+                  <TableCell className="text-right text-dark dark:text-white">{fmt(m.output_tokens)}</TableCell>
+                  <TableCell className="pr-4 text-right font-semibold text-dark dark:text-white">
+                    {usd(m.cost_usd)}
+                    <span className="ml-2 text-xs font-normal text-gray-500 dark:text-[#8f8f8a]">
+                      {m.cost_source === "configured" ? "harga sendiri" : "dari provider"}
+                    </span>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
 
       {/* Bottom Row */}
       <div className="grid grid-cols-12 gap-4">

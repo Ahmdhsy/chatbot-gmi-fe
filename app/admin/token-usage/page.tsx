@@ -59,6 +59,46 @@ interface PeriodData {
   users: UserUsage[];
 }
 
+interface ModelUsage {
+  model_name: string | null;
+  llm_provider: string | null;
+  conversations: number;
+  input_tokens: number;
+  output_tokens: number;
+  cached_tokens: number;
+  total_tokens: number;
+  provider_cost_usd: number;
+  cost_usd: number;
+  cost_source: "configured" | "provider";
+  input_per_1m: number | null;
+  output_per_1m: number | null;
+}
+
+interface ModelsData {
+  days: number;
+  active_model: string;
+  provider: string;
+  models: ModelUsage[];
+}
+
+interface ConversationRow {
+  conversation_id: string;
+  pair_index: number | null;
+  pairs_in_conversation: number;
+  question: string;
+  question_type: string | null;
+  model_name: string | null;
+  total_tokens: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cached_tokens: number;
+  cost_usd: number | null;
+  provider_cost_usd: number | null;
+  cost_source: "configured" | "provider";
+  num_llm_calls: number;
+  created_at: string;
+}
+
 type Period = "today" | "week" | "month" | "year";
 
 const PERIOD_LABELS: Record<Period, string> = {
@@ -70,6 +110,14 @@ const PERIOD_LABELS: Record<Period, string> = {
 
 const fmt = (n: number | null | undefined) =>
   typeof n === "number" ? n.toLocaleString("id-ID") : "-";
+
+// Per-pair costs are fractions of a cent, so a fixed 2-decimal format would
+// render every row as "$0.00" — scale the precision to the magnitude instead.
+const usd = (n: number | null | undefined) =>
+  typeof n !== "number" ? "-" : `$${n.toLocaleString("en-US", {
+    minimumFractionDigits: n < 1 ? 4 : 2,
+    maximumFractionDigits: n < 1 ? 6 : 2,
+  })}`;
 
 const pct = (used: number, total: number) =>
   total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0;
@@ -94,7 +142,21 @@ export default function TokenUsagePage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
 
+  // Model + pricing + per-pair detail (superadmin only)
+  const [models, setModels] = useState<ModelsData | null>(null);
+  const [pairs, setPairs] = useState<ConversationRow[]>([]);
+  const [pairsAllowed, setPairsAllowed] = useState(false);
+  const [pairsTotal, setPairsTotal] = useState(0);
+  const [pairsLoading, setPairsLoading] = useState(false);
+  const [pairsPage, setPairsPage] = useState(0);
+  const [priceModel, setPriceModel] = useState<string | null>(null);
+  const [priceIn, setPriceIn] = useState("");
+  const [priceOut, setPriceOut] = useState("");
+  const [priceError, setPriceError] = useState<string | null>(null);
+  const [priceSaving, setPriceSaving] = useState(false);
+
   const isSuperadmin = role === "superadmin";
+  const PAIRS_PER_PAGE = 20;
 
   const loadQuota = useCallback(async () => {
     try {
@@ -118,12 +180,51 @@ export default function TokenUsagePage() {
     }
   }, []);
 
+  const loadModels = useCallback(async () => {
+    try {
+      const res = await apiFetch("/token-usage/models?days=365");
+      // 403 => not a superadmin; leave `models` null so the panel stays hidden.
+      setModels(res.ok ? await res.json() : null);
+    } catch {
+      // non-fatal: the rest of the page still works
+    }
+  }, []);
+
+  const loadPairs = useCallback(async (page: number) => {
+    setPairsLoading(true);
+    try {
+      const res = await apiFetch(
+        `/token-usage/conversations?all_users=true&days=365` +
+          `&limit=${PAIRS_PER_PAGE}&offset=${page * PAIRS_PER_PAGE}`
+      );
+      setPairsAllowed(res.ok);
+      if (res.ok) {
+        const data = await res.json();
+        setPairs(data.conversations ?? []);
+        setPairsTotal(data.total ?? 0);
+      }
+    } catch {
+      // non-fatal
+    } finally {
+      setPairsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     setRole(getRoleFromCookie());
     Promise.all([loadQuota(), loadPeriodData("month")]).finally(() =>
       setLoading(false)
     );
   }, [loadQuota, loadPeriodData]);
+
+  // These panels are superadmin-only, but we ask the BACKEND rather than trusting
+  // the role cookie: it can be stale (logged in before a role change) or set
+  // asynchronously by the admin layout after this page already read it, which
+  // silently hid the panels from a real superadmin. A 403 hides them instead.
+  useEffect(() => {
+    loadModels();
+    loadPairs(0);
+  }, [loadModels, loadPairs]);
 
   const handlePeriodChange = (period: Period) => {
     setSelectedPeriod(period);
@@ -188,6 +289,54 @@ export default function TokenUsagePage() {
     }
   };
 
+  const handleOpenPrice = (m: ModelUsage) => {
+    setPriceModel(m.model_name);
+    setPriceIn(m.input_per_1m != null ? String(m.input_per_1m) : "");
+    setPriceOut(m.output_per_1m != null ? String(m.output_per_1m) : "");
+    setPriceError(null);
+  };
+
+  const handleSubmitPrice = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPriceError(null);
+
+    const input = Number(priceIn);
+    const output = Number(priceOut);
+    if (!Number.isFinite(input) || input < 0 || !Number.isFinite(output) || output < 0) {
+      setPriceError("Harga harus angka >= 0.");
+      return;
+    }
+
+    setPriceSaving(true);
+    try {
+      const res = await apiFetch("/token-usage/pricing", {
+        method: "PUT",
+        body: JSON.stringify({
+          model_name: priceModel,
+          input_per_1m: input,
+          output_per_1m: output,
+        }),
+      });
+      if (res.ok) {
+        setPriceModel(null);
+        // Rates apply retroactively, so both panels need re-fetching.
+        await Promise.all([loadModels(), loadPairs(pairsPage)]);
+      } else {
+        const body = await res.json().catch(() => null);
+        setPriceError(body?.detail ?? "Gagal menyimpan harga.");
+      }
+    } catch {
+      setPriceError("Terjadi kesalahan jaringan.");
+    } finally {
+      setPriceSaving(false);
+    }
+  };
+
+  const handlePairsPage = (next: number) => {
+    setPairsPage(next);
+    loadPairs(next);
+  };
+
   const dailyBudgetToday =
     quota ? quota.daily_quota + Math.max(quota.carryover_in, 0) : 0;
 
@@ -248,6 +397,172 @@ export default function TokenUsagePage() {
                 <StatCard label="Sisa Tersedia" value={fmt(quota.available_today)} sub="Termasuk akumulasi rollover" highlight />
                 <StatCard label="Sisa Tahunan" value={fmt(quota.yearly_remaining)} sub={`dari ${fmt(quota.yearly_cap)} (${pct(quota.yearly_used, quota.yearly_cap)}% terpakai)`} barPct={pct(quota.yearly_used, quota.yearly_cap)} />
               </div>
+            </div>
+          )}
+
+          {/* Model & pricing (backend returns 403 for non-superadmins) */}
+          {models && (
+            <div className="mb-6 rounded-[10px] border border-stroke bg-white p-4 shadow-1 dark:border-dark-3 dark:bg-gray-dark dark:shadow-card sm:p-7.5">
+              <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-xl font-semibold text-dark dark:text-white">
+                    Model LLM &amp; Harga Token
+                  </h3>
+                  <p className="mt-1 text-sm text-gray-500 dark:text-[#8f8f8a]">
+                    Harga dalam USD per 1 juta token. Mengubah harga langsung
+                    menghitung ulang biaya seluruh riwayat.
+                  </p>
+                </div>
+                <span className="rounded-full bg-[#FE6C11]/10 px-3 py-1 text-sm font-medium text-[#FE6C11]">
+                  Aktif: {models.active_model} ({models.provider})
+                </span>
+              </div>
+
+              <div className="max-w-full overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-none bg-[#F7F9FC] dark:bg-dark-2">
+                      <TableHead className="min-w-[200px] text-dark dark:text-white">Model</TableHead>
+                      <TableHead className="text-dark dark:text-white">Percakapan</TableHead>
+                      <TableHead className="text-dark dark:text-white">Token Input</TableHead>
+                      <TableHead className="text-dark dark:text-white">Token Output</TableHead>
+                      <TableHead className="text-dark dark:text-white">Harga In / Out</TableHead>
+                      <TableHead className="text-dark dark:text-white">Total Biaya</TableHead>
+                      <TableHead className="text-dark dark:text-white">Aksi</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {models.models.map((m) => (
+                      <TableRow key={m.model_name ?? "unknown"} className="border-b border-stroke dark:border-dark-3">
+                        <TableCell className="font-medium text-dark dark:text-white">
+                          {m.model_name ?? "-"}
+                          {m.model_name === models.active_model && (
+                            <span className="ml-2 rounded bg-[#219653]/[0.08] px-2 py-0.5 text-xs font-medium text-[#219653]">
+                              aktif
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-dark dark:text-white">{fmt(m.conversations)}</TableCell>
+                        <TableCell className="text-dark dark:text-white">{fmt(m.input_tokens)}</TableCell>
+                        <TableCell className="text-dark dark:text-white">{fmt(m.output_tokens)}</TableCell>
+                        <TableCell className="text-dark dark:text-white">
+                          {m.input_per_1m != null
+                            ? `$${m.input_per_1m} / $${m.output_per_1m}`
+                            : <span className="text-gray-500 dark:text-[#8f8f8a]">belum diatur</span>}
+                        </TableCell>
+                        <TableCell className="font-semibold text-dark dark:text-white">
+                          {usd(m.cost_usd)}
+                          <span className={cn(
+                            "ml-2 rounded px-2 py-0.5 text-xs font-medium",
+                            m.cost_source === "configured"
+                              ? "bg-[#FE6C11]/10 text-[#FE6C11]"
+                              : "bg-gray-200 text-gray-600 dark:bg-dark-3 dark:text-[#8f8f8a]"
+                          )}>
+                            {m.cost_source === "configured" ? "harga sendiri" : "dari provider"}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <button
+                            onClick={() => handleOpenPrice(m)}
+                            className="rounded-lg border border-stroke px-3 py-1.5 text-xs font-semibold text-dark transition-colors hover:bg-gray-100 dark:border-dark-3 dark:text-white dark:hover:bg-[#2d2a27]"
+                          >
+                            Atur Harga
+                          </button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
+
+          {/* Per-pair token detail (backend returns 403 for non-superadmins) */}
+          {pairsAllowed && (
+            <div className="mb-6 rounded-[10px] border border-stroke bg-white p-4 shadow-1 dark:border-dark-3 dark:bg-gray-dark dark:shadow-card sm:p-7.5">
+              <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+                <h3 className="text-xl font-semibold text-dark dark:text-white">
+                  Rincian per Percakapan
+                </h3>
+                <span className="text-sm text-gray-500 dark:text-[#8f8f8a]">
+                  {fmt(pairsTotal)} pasang tanya-jawab
+                </span>
+              </div>
+
+              {pairsLoading ? (
+                <div className="flex h-24 items-center justify-center">
+                  <div className="h-8 w-8 animate-spin rounded-full border-4 border-solid border-primary border-t-transparent" />
+                </div>
+              ) : (
+                <>
+                  <div className="max-w-full overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="border-none bg-[#F7F9FC] dark:bg-dark-2">
+                          <TableHead className="min-w-[260px] text-dark dark:text-white">Pertanyaan</TableHead>
+                          <TableHead className="text-dark dark:text-white">Pasangan</TableHead>
+                          <TableHead className="text-dark dark:text-white">Model</TableHead>
+                          <TableHead className="text-dark dark:text-white">Input</TableHead>
+                          <TableHead className="text-dark dark:text-white">Output</TableHead>
+                          <TableHead className="text-dark dark:text-white">Cached</TableHead>
+                          <TableHead className="text-dark dark:text-white">Total</TableHead>
+                          <TableHead className="text-dark dark:text-white">Biaya</TableHead>
+                          <TableHead className="text-dark dark:text-white">Waktu</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {pairs.map((p, i) => (
+                          <TableRow key={`${p.conversation_id}-${i}`} className="border-b border-stroke dark:border-dark-3">
+                            <TableCell className="max-w-[320px] truncate text-dark dark:text-white" title={p.question}>
+                              {p.question}
+                              <span className="block truncate text-xs text-gray-500 dark:text-[#8f8f8a]">
+                                {p.conversation_id}
+                              </span>
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap text-dark dark:text-white">
+                              <span className="font-medium">{p.pair_index ?? "-"}</span>
+                              <span className="text-gray-500 dark:text-[#8f8f8a]"> / {p.pairs_in_conversation}</span>
+                            </TableCell>
+                            <TableCell className="text-xs text-gray-500 dark:text-[#8f8f8a]">{p.model_name ?? "-"}</TableCell>
+                            <TableCell className="text-dark dark:text-white">{fmt(p.prompt_tokens)}</TableCell>
+                            <TableCell className="text-dark dark:text-white">{fmt(p.completion_tokens)}</TableCell>
+                            <TableCell className="text-gray-500 dark:text-[#8f8f8a]">{fmt(p.cached_tokens)}</TableCell>
+                            <TableCell className="font-medium text-dark dark:text-white">{fmt(p.total_tokens)}</TableCell>
+                            <TableCell className="font-semibold text-dark dark:text-white">{usd(p.cost_usd)}</TableCell>
+                            <TableCell className="text-xs text-gray-500 dark:text-[#8f8f8a]">
+                              {dayjs(p.created_at).format("DD MMM YY HH:mm")}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+
+                  {pairsTotal > PAIRS_PER_PAGE && (
+                    <div className="mt-4 flex items-center justify-between">
+                      <span className="text-sm text-gray-500 dark:text-[#8f8f8a]">
+                        Halaman {pairsPage + 1} dari {Math.ceil(pairsTotal / PAIRS_PER_PAGE)}
+                      </span>
+                      <div className="flex gap-2">
+                        <button
+                          disabled={pairsPage === 0}
+                          onClick={() => handlePairsPage(pairsPage - 1)}
+                          className="rounded-lg border border-stroke px-4 py-2 text-sm font-semibold text-dark transition-colors hover:bg-gray-100 disabled:opacity-40 dark:border-dark-3 dark:text-white dark:hover:bg-[#2d2a27]"
+                        >
+                          Sebelumnya
+                        </button>
+                        <button
+                          disabled={(pairsPage + 1) * PAIRS_PER_PAGE >= pairsTotal}
+                          onClick={() => handlePairsPage(pairsPage + 1)}
+                          className="rounded-lg border border-stroke px-4 py-2 text-sm font-semibold text-dark transition-colors hover:bg-gray-100 disabled:opacity-40 dark:border-dark-3 dark:text-white dark:hover:bg-[#2d2a27]"
+                        >
+                          Berikutnya
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           )}
 
@@ -381,6 +696,59 @@ export default function TokenUsagePage() {
             )}
           </div>
         </>
+      )}
+
+      {/* Model pricing modal (superadmin only) */}
+      {priceModel && (
+        <div className="fixed inset-0 z-9999 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="relative w-full max-w-[480px] rounded-[14px] border border-stroke bg-white p-6 shadow-1 dark:border-dark-3 dark:bg-[#232220] dark:shadow-card">
+            <div className="flex items-center justify-between border-b border-stroke pb-4 dark:border-dark-3">
+              <h3 className="text-lg font-bold text-dark dark:text-white">Atur Harga Token</h3>
+              <button
+                onClick={() => setPriceModel(null)}
+                className="text-gray-500 transition-colors hover:text-dark dark:text-[#8f8f8a] dark:hover:text-white"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="h-5 w-5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitPrice} className="mt-4 flex flex-col gap-4">
+              {priceError && (
+                <div className="rounded-lg bg-red-500/10 p-3 text-sm font-medium text-red-500 dark:bg-red-500/5">
+                  {priceError}
+                </div>
+              )}
+
+              <p className="rounded-lg bg-[#F7F9FC] p-3 text-sm text-dark dark:bg-dark-2 dark:text-[#ece7dc]">
+                Model: <span className="font-semibold">{priceModel}</span>
+              </p>
+
+              <Field label="Harga Input (USD per 1 juta token)">
+                <input type="number" min={0} step="any" required value={priceIn} onChange={(e) => setPriceIn(e.target.value)} className={inputCls} placeholder="mis. 0.40" />
+              </Field>
+
+              <Field label="Harga Output (USD per 1 juta token)">
+                <input type="number" min={0} step="any" required value={priceOut} onChange={(e) => setPriceOut(e.target.value)} className={inputCls} placeholder="mis. 1.60" />
+              </Field>
+
+              <p className="text-xs text-gray-500 dark:text-[#8f8f8a]">
+                Biaya dihitung ulang saat ditampilkan, jadi seluruh riwayat ikut
+                memakai harga ini. Data token asli tidak diubah.
+              </p>
+
+              <div className="mt-2 flex items-center justify-end gap-3 border-t border-stroke pt-4 dark:border-dark-3">
+                <button type="button" onClick={() => setPriceModel(null)} className="rounded-lg border border-stroke px-4 py-2 text-sm font-semibold text-dark transition-colors hover:bg-gray-100 dark:border-dark-3 dark:text-white dark:hover:bg-[#2d2a27]">
+                  Batal
+                </button>
+                <button type="submit" disabled={priceSaving} className="rounded-lg bg-[#FE6C11] px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#e05b0a] disabled:opacity-50">
+                  {priceSaving ? "Menyimpan..." : "Simpan"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
 
       {/* Edit Quota Modal (superadmin only) */}
