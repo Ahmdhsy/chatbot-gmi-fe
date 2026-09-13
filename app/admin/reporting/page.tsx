@@ -35,6 +35,13 @@ interface ReportResponse {
 
 type PeriodMode = "latest" | "daily" | "monthly";
 type OutputMode = "both" | "table" | "chart";
+type Coverage = "self" | "children" | "with_nation";
+
+const COVERAGE_LABELS: Record<Coverage, string> = {
+  self: "Lokasi ini saja",
+  children: "+ rincian level di bawahnya",
+  with_nation: "+ rincian & pembanding NATIONWIDE",
+};
 
 const OUTPUT_LABELS: Record<OutputMode, string> = {
   both: "Tabel + Grafik",
@@ -48,6 +55,29 @@ const PERIOD_LABELS: Record<PeriodMode, string> = {
   monthly: "Bulan tertentu (MTD)",
 };
 
+/** A readable message out of an error body.
+ *
+ * `detail` is a plain string for the errors this endpoint raises itself, but
+ * FastAPI's own request validation returns a LIST of {loc, msg, type, input}
+ * objects — putting that straight into state crashes the page ("Objects are not
+ * valid as a React child"). Never trust the shape, always end up with a string.
+ */
+function errorText(body: unknown, fallback: string): string {
+  const detail = (body as { detail?: unknown } | null | undefined)?.detail;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((item) =>
+        item && typeof item === "object" && "msg" in item
+          ? String((item as { msg: unknown }).msg)
+          : ""
+      )
+      .filter(Boolean);
+    if (messages.length) return messages.join("; ");
+  }
+  return fallback;
+}
+
 const BTN_PRIMARY =
   "flex items-center justify-center gap-2 rounded-lg bg-[#FE6C11] px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#e05b0a] disabled:cursor-not-allowed disabled:opacity-50";
 
@@ -60,9 +90,9 @@ export default function ReportingPage() {
   const [area, setArea] = useState("");
   const [region, setRegion] = useState("");
   const [nop, setNop] = useState("");
-  const [includeChildren, setIncludeChildren] = useState(true);
+  const [coverage, setCoverage] = useState<Coverage>("children");
   const [output, setOutput] = useState<OutputMode>("both");
-  const [metric, setMetric] = useState("");
+  const [metrics, setMetrics] = useState<string[]>([]);
   const [periodMode, setPeriodMode] = useState<PeriodMode>("latest");
   const [date, setDate] = useState("");
   const [month, setMonth] = useState("");
@@ -98,7 +128,8 @@ export default function ReportingPage() {
         setTables(list);
         if (list.length) {
           setTableId(list[0].tableId);
-          setMetric(list[0].metrics[0]?.value ?? "");
+          const first = list[0].metrics[0]?.value;
+          setMetrics(first ? [first] : []);
         }
       })
       .catch(() => {
@@ -107,18 +138,28 @@ export default function ReportingPage() {
     return () => { active = false; };
   }, []);
 
-  // Switching table invalidates the metric picked from the previous catalog.
+  // Switching table invalidates KPIs picked from the previous catalog.
   useEffect(() => {
-    if (table && !table.metrics.some((m) => m.value === metric)) {
-      setMetric(table.metrics[0]?.value ?? "");
-    }
-  }, [table, metric]);
+    if (!table) return;
+    const known = new Set(table.metrics.map((m) => m.value));
+    setMetrics((prev) => {
+      const kept = prev.filter((m) => known.has(m));
+      if (kept.length === prev.length) return prev;  // no change → keep identity
+      return kept.length ? kept : [table.metrics[0]?.value].filter(Boolean) as string[];
+    });
+  }, [table]);
 
-  const locationLabel = nop || region || area || "NATIONWIDE";
+  const toggleMetric = (value: string) =>
+    setMetrics((prev) =>
+      prev.includes(value) ? prev.filter((m) => m !== value) : [...prev, value]
+    );
+
+  const locationPicked = !!(nop || region || area);
+  const locationLabel = locationPicked ? nop || region || area : "NATIONWIDE";
 
   const canRun =
     !!tableId &&
-    !!metric &&
+    metrics.length > 0 &&
     !running &&
     (periodMode !== "daily" || !!date) &&
     (periodMode !== "monthly" || !!month);
@@ -135,9 +176,9 @@ export default function ReportingPage() {
           area: area || null,
           region: region || null,
           nop: nop || null,
-          includeChildren,
+          coverage,
           output,
-          metrics: metric,
+          metrics,
           period: {
             mode: periodMode,
             date: periodMode === "daily" ? date : null,
@@ -147,7 +188,7 @@ export default function ReportingPage() {
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) {
-        setError(body?.detail ?? "Laporan gagal dibuat.");
+        setError(errorText(body, "Laporan gagal dibuat."));
         return;
       }
       if (!body?.markdown?.trim() && !body?.charts?.length) {
@@ -165,7 +206,7 @@ export default function ReportingPage() {
   const reset = () => {
     setArea(""); setRegion(""); setNop("");
     setPeriodMode("latest"); setDate(""); setMonth("");
-    setIncludeChildren(true); setOutput("both");
+    setCoverage("children"); setOutput("both");
     setReport(null); setError(null);
   };
 
@@ -201,15 +242,38 @@ export default function ReportingPage() {
             onNopChange={setNop}
           />
 
-          <label className="flex w-fit cursor-pointer items-center gap-2 text-sm text-dark dark:text-[#ece7dc]">
-            <input
-              type="checkbox"
-              checked={includeChildren}
-              onChange={(e) => setIncludeChildren(e.target.checked)}
-              className="size-4 accent-[#FE6C11]"
-            />
-            Tampilkan juga rincian level di bawahnya
-          </label>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-dark dark:text-[#ece7dc]">
+              KPI{" "}
+              <span className="font-normal text-gray-500 dark:text-[#8f8f8a]">
+                (boleh pilih lebih dari satu — {metrics.length} dipilih)
+              </span>
+            </label>
+            <div className="grid max-h-52 grid-cols-1 gap-x-6 gap-y-2 overflow-y-auto rounded-lg border border-stroke p-3 dark:border-dark-3 sm:grid-cols-3">
+              {!table?.metrics.length && (
+                <span className="text-sm text-gray-500 dark:text-[#8f8f8a]">Memuat…</span>
+              )}
+              {table?.metrics.map((m) => (
+                <label
+                  key={m.value}
+                  className="flex cursor-pointer items-center gap-2 text-sm text-dark dark:text-[#ece7dc]"
+                >
+                  <input
+                    type="checkbox"
+                    checked={metrics.includes(m.value)}
+                    onChange={() => toggleMetric(m.value)}
+                    className="size-4 shrink-0 accent-[#FE6C11]"
+                  />
+                  {/* A set is a bundle of KPIs, not one of them — mark it so the
+                      two never read as the same kind of choice. */}
+                  <span className={m.value.startsWith("set:") ? "font-semibold" : ""}>
+                    {m.label}
+                    {m.value.startsWith("set:") && " (paket)"}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             {tables.length > 1 && (
@@ -226,13 +290,15 @@ export default function ReportingPage() {
             )}
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-semibold text-dark dark:text-[#ece7dc]">KPI</label>
-              <select value={metric} onChange={(e) => setMetric(e.target.value)} className={SELECT_CLASS}>
-                {!table?.metrics.length && <option value="">- Memuat -</option>}
-                {table?.metrics.map((m) => (
-                  <option key={m.value} value={m.value} className="dark:bg-[#232220]">
-                    {m.label}
-                  </option>
+              <label className="text-xs font-semibold text-dark dark:text-[#ece7dc]">Cakupan</label>
+              <select
+                value={coverage}
+                onChange={(e) => setCoverage(e.target.value as Coverage)}
+                disabled={!locationPicked}
+                className={SELECT_CLASS}
+              >
+                {(Object.keys(COVERAGE_LABELS) as Coverage[]).map((c) => (
+                  <option key={c} value={c} className="dark:bg-[#232220]">{COVERAGE_LABELS[c]}</option>
                 ))}
               </select>
             </div>
@@ -306,6 +372,7 @@ export default function ReportingPage() {
             </button>
             <span className="text-sm text-gray-500 dark:text-[#8f8f8a]">
               Lokasi: <b className="text-dark dark:text-white">{locationLabel}</b>
+              {!locationPicked && " — tanpa lokasi, laporan keluar sebagai overview nasional + area + region"}
             </span>
           </div>
         </div>
