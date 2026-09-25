@@ -34,6 +34,12 @@ export const NAV_DATA: NavSection[] = [
         items: [],
       },
       {
+        title: "Smart Interactive Reporting",
+        url: "/admin/reporting-chat",
+        icon: Icons.FourCircle,
+        items: [],
+      },
+      {
         title: "Manage User",
         url: "/admin/users",
         icon: Icons.User,
