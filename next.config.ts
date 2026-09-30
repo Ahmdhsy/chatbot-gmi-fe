@@ -8,6 +8,12 @@ const nextConfig: NextConfig = {
   // Don't leak the framework version in the response header.
   poweredByHeader: false,
 
+  // The embed page is its own Next document inside the widget iframe, so the
+  // dev overlay renders INSIDE the panel and sits on top of the chat. It never
+  // ships to production; turning it off just stops it lying about the layout
+  // while developing.
+  devIndicators: false,
+
   // Dev in Docker on a Windows host: the host-to-VM file-sharing layer drops
   // filesystem events, so Fast Refresh never fires and edits only appear after
   // a container restart. Polling is Next's documented last resort for exactly

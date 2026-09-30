@@ -47,10 +47,15 @@
     "background:#f06a25;color:#fff;font-size:24px;line-height:1;",
     "box-shadow:0 6px 20px rgba(0,0,0,.25)}",
     ".btn:hover{filter:brightness(1.08)}",
+    // KPI tables are wide: a narrow panel turns every answer into a
+    // horizontal scroll hunt. 520px is the point where the Data/%MoM/%QoQ
+    // columns fit without the host page feeling taken over.
     ".panel{position:fixed;bottom:88px;" + side + ":20px;z-index:2147483647;",
-    "width:min(440px,calc(100vw - 40px));height:min(640px,calc(100vh - 120px));",
-    "border:0;border-radius:14px;background:#fff;display:none;",
-    "box-shadow:0 12px 40px rgba(0,0,0,.3);overflow:hidden}",
+    "width:min(520px,calc(100vw - 40px));height:min(720px,calc(100vh - 120px));",
+    // Matches the app's forced-dark theme, so the iframe does not flash white
+    // before it paints.
+    "border:0;border-radius:16px;background:#1a1a19;display:none;",
+    "box-shadow:0 18px 50px rgba(0,0,0,.28);overflow:hidden}",
     ".panel.open{display:block}",
     "@media(max-width:480px){.panel{width:calc(100vw - 20px);",
     "height:calc(100vh - 100px);" + side + ":10px}}",
