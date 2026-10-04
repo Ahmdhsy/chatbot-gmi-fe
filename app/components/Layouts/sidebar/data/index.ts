@@ -10,6 +10,7 @@ interface NavItem {
   icon: any;
   items: NavSubItem[];
   url?: string;
+  superadminOnly?: boolean;
 }
 
 interface NavSection {
@@ -50,6 +51,13 @@ export const NAV_DATA: NavSection[] = [
         url: "/admin/token-usage",
         icon: Icons.PieChart,
         items: [],
+      },
+      {
+        title: "Kode Widget",
+        url: "/admin/widget-tokens",
+        icon: Icons.PieChart,
+        items: [],
+        superadminOnly: true,
       },
       {
         title: "Database Sources",

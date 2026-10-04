@@ -1,5 +1,17 @@
 # Menempelkan Smart Interactive Reporting ke situs lain
 
+Jalankan migrasi backend sebelum memakai pendaftaran website baru:
+
+```powershell
+cd ../chatbot-gmi/backend
+alembic -c app/alembic.ini upgrade head
+```
+
+Jika frontend dan backend berjalan di container berbeda, server Next.js perlu
+`EMBED_POLICY_API_BASE=http://api:8000/v1`. File Docker Compose di repository
+ini sudah mengisinya. Saat berjalan dari terminal lokal, nilai bawaan
+`NEXT_PUBLIC_API_BASE` dipakai.
+
 Chat ini murni NLP (tanpa LLM), jadi biayanya nol per pertanyaan dan jawabannya
 deterministik — cocok ditempel di portal lain.
 
@@ -24,35 +36,36 @@ data yang terlihat di widget** — RBAC yang sudah ada dipakai apa adanya:
 
 Kalau satu situs butuh cakupan berbeda, buat service account terpisah.
 
-## 2. Cetak token di BACKEND situs tuan rumah
+## 2. Daftarkan website sebagai superadmin
 
-Kredensial service account **tidak boleh** sampai ke browser. Yang dikirim ke
-halaman hanya token pendek hasil cetakan:
+Login sebagai superadmin, buka **Dashboard → Token Widget**
+(`/admin/widget-tokens`). Isi nama website dan **origin persis** seperti
+`https://portal.example.co.id` (tanpa path), pilih akun dan tekan
+**Buat kode widget**. Salin kode yang muncul ke website tersebut. Untuk website
+lain, buat pendaftaran baru. Superadmin dapat mencabut tiap pendaftaran kapan saja.
 
-```bash
-# sekali, simpan token login-nya di server situs tuan rumah
-curl -X POST https://APP/v1/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"widget-bot@contoh.co.id","password":"..."}'
+Kode pemasangan memuat ID publik, bukan kredensial permanen. Widget meminta
+sesi 15 menit dari backend dan memperbaruinya otomatis selama dibuka. Endpoint
+sesi hanya melayani origin yang didaftarkan. Backend juga memeriksa status
+pendaftaran saat setiap request reporting, sehingga pencabutan berlaku langsung.
 
-# tiap kali merender halaman untuk pengunjung
-curl -X POST https://APP/v1/embed/token \
-  -H "Authorization: Bearer <token login service account>" \
-  -H 'Content-Type: application/json' \
-  -d '{"ttlMinutes":30}'
-# -> {"token":"eyJ...","expiresInSeconds":1800,"scope":"NATIONWIDE"}
-```
+Karena ID pemasangan terlihat di HTML, origin membatasi pemakaian oleh browser,
+tetapi tidak menjadi autentikasi kuat terhadap klien non-browser yang memalsukan
+header Origin. Gunakan hanya untuk data yang memang disetujui untuk publik.
+Rate limit per IP dan tombol **Cabut akses** tersedia.
 
-Token itu berumur pendek (maks 120 menit) dan **hanya** membuka
-`POST /v1/reporting/ask` dan `GET /v1/reporting/ask/examples`. Dipakai ke endpoint
-lain — chat LLM, `/reporting/run`, bahkan untuk mencetak token lagi — hasilnya 401.
+Di bawah daftar website masih ada **Token manual sementara**. Hanya superadmin
+yang dapat membuatnya lewat `POST /v1/embed/token`, dengan masa berlaku maksimal
+120 menit. Token manual perlu diganti saat habis.
 
 ## 3. Pasang di halaman
 
 **Bubble melayang**
 
 ```html
-<script src="https://APP/widget.js" data-token="{{ embed_token }}"></script>
+<script src="https://APP/widget.js"
+        data-widget-id="{{ id_dari_dashboard }}"
+        data-api-base="https://API/v1"></script>
 ```
 
 Atribut opsional: `data-title`, `data-position="left"`, `data-open="true"`,
@@ -65,14 +78,14 @@ menutup panel. Kontrol JS tambahan: `ReportingWidget.maximize()` dan
 **Halaman penuh**
 
 ```html
-<iframe src="https://APP/embed/reporting#token={{ embed_token }}"
+<iframe src="https://APP/embed/reporting#token={{ token_manual }}"
         style="width:100%;height:80vh;border:0"></iframe>
 ```
 
 **Tautan biasa** (tanpa iframe, jadi tanpa syarat langkah 4)
 
 ```html
-<a href="https://APP/embed/reporting#token={{ embed_token }}" target="_blank">
+<a href="https://APP/embed/reporting#token={{ token_manual }}" target="_blank">
   Buka laporan
 </a>
 ```
@@ -81,10 +94,14 @@ Token selalu di **fragment** (`#token=`), bukan query string — fragment tidak
 dikirim ke server, jadi tidak masuk access log maupun header Referer. Halaman
 embed juga langsung menghapusnya dari address bar setelah dibaca.
 
-## 4. Izinkan origin situs tuan rumah (khusus iframe)
+## 4. Kebijakan iframe
 
-Semua halaman aplikasi ini memasang `X-Frame-Options: DENY`. Hanya `/embed/*`
-yang dikecualikan, dan itupun hanya untuk origin yang disebut eksplisit:
+Semua halaman aplikasi ini memasang `X-Frame-Options: DENY`. Untuk kode widget
+yang didaftarkan di dashboard, `/embed/reporting?widget=...` memakai kebijakan
+`frame-ancestors` sesuai origin pendaftaran aktif dari backend. Tidak perlu
+menambah environment variable tiap kali memasang website baru.
+
+Untuk iframe manual tanpa ID pemasangan, origin harus disebut di konfigurasi:
 
 ```bash
 # .env frontend
@@ -104,9 +121,8 @@ curl -sI https://APP/embed/reporting | grep -i -e content-security-policy -e x-f
 
 ## Yang belum ada
 
-- **Perpanjangan token otomatis.** Setelah TTL habis, widget menampilkan pesan
-  kedaluwarsa dan pengunjung memuat ulang halaman induk. Kalau dirasa mengganggu,
-  yang perlu ditambah adalah endpoint refresh, bukan TTL yang dipanjangkan.
+- **Token manual.** Token yang diberikan lewat `data-token` masih harus diganti
+  setelah habis. Kode pemasangan dengan `data-widget-id` memperbarui sesi otomatis.
 - **Riwayat percakapan.** Hilang saat panel ditutup.
-- **Pembatasan laju per token.** Rate limit yang ada berlaku global untuk
-  `/v1/chat`, belum untuk `/reporting/ask`.
+- **Pembatasan laju.** Request `/reporting/ask` dari widget memakai batas per IP
+  dan batas report aktif.

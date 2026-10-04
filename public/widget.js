@@ -3,19 +3,19 @@
  *
  * Drop one tag on any page:
  *
- *   <script src="https://APP/widget.js"
- *           data-token="<embed token from your backend>"></script>
+ *   <script src="https://APP/widget.js" data-widget-id="<installation id>"
+ *           data-api-base="https://API/v1"></script>
  *
  * Optional: data-title, data-origin (defaults to where this script came from),
  * data-position="left", data-open="true".
  *
  * The panel is an <iframe> pointing at /embed/reporting on OUR origin, so the
- * host page's CSS and ours can never collide, and the API call happens
- * same-origin inside the frame (no CORS involved at all).
+ * host page's CSS and ours can never collide. Session exchange runs from the
+ * host page with an origin check; reporting calls run inside the frame.
  *
- * Mint the token SERVER-SIDE (POST /v1/embed/token with the service account's
- * login) and render it per visitor. Never ship the service account's own
- * credentials to a page.
+ * The installation ID is public. A superadmin authorizes its exact website
+ * origin; the widget obtains and renews a short-lived reporting session.
+ * data-token remains available for manually issued tokens.
  */
 (function () {
   "use strict";
@@ -24,12 +24,14 @@
   if (!script) return;
 
   var token = script.getAttribute("data-token") || "";
-  if (!token) {
-    console.error("[reporting-widget] data-token is required");
+  var installationId = script.getAttribute("data-widget-id") || "";
+  if (!token && !installationId) {
+    console.error("[reporting-widget] data-widget-id or data-token is required");
     return;
   }
 
   var origin = script.getAttribute("data-origin") || new URL(script.src).origin;
+  var apiBase = (script.getAttribute("data-api-base") || origin + "/v1").replace(/\/$/, "");
   var title = script.getAttribute("data-title") || "Smart Interactive Reporting";
   var left = script.getAttribute("data-position") === "left";
   var side = left ? "left" : "right";
@@ -67,6 +69,9 @@
     ".grip{position:absolute;right:0;bottom:0;width:24px;height:24px;",
     "cursor:nwse-resize;touch-action:none;background:linear-gradient(135deg,transparent 58%,#b8aca0 60%,#b8aca0 65%,transparent 67%)}",
     ".panel.maximized .grip{display:none}",
+    ".status{display:none;position:absolute;inset:38px 0 0;place-items:center;padding:24px;",
+    "background:#1a1a19;color:#e8d5c7;text-align:center;font:14px system-ui,sans-serif}",
+    ".status.visible{display:grid}",
   ].join("");
 
   var panel = document.createElement("div");
@@ -100,11 +105,15 @@
   frame.title = title;
   // Enough to run the app, nothing more: no top-navigation, no popups.
   frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-downloads");
+  var status = document.createElement("div");
+  status.className = "status";
+  status.setAttribute("role", "status");
   var grip = document.createElement("div");
   grip.className = "grip";
   grip.setAttribute("aria-label", "Ubah ukuran widget");
   panel.appendChild(head);
   panel.appendChild(frame);
+  panel.appendChild(status);
   panel.appendChild(grip);
 
   var btn = document.createElement("button");
@@ -117,6 +126,44 @@
   var geometry;
   var maximized = false;
   var loaded = false;
+  var sessionExpiresAt = 0;
+  var sessionTimer = null;
+  var sessionRequest = null;
+  function refreshSession() {
+    if (!installationId) return Promise.resolve(token);
+    if (sessionRequest) return sessionRequest;
+    sessionRequest = fetch(apiBase + "/embed/installations/" + encodeURIComponent(installationId) + "/session", {
+      credentials: "omit", cache: "no-store"
+    }).then(function (response) {
+      if (!response.ok) throw new Error("Widget session unavailable (HTTP " + response.status + ")");
+      return response.json();
+    }).then(function (data) {
+      token = data.token;
+      status.classList.remove("visible");
+      sessionExpiresAt = Date.now() + data.expiresInSeconds * 1000;
+      if (loaded && frame.contentWindow) {
+        frame.contentWindow.postMessage({ type: "reporting-widget-token", token: token }, origin);
+      }
+      if (sessionTimer) clearTimeout(sessionTimer);
+      sessionTimer = setTimeout(function () {
+        if (panel.classList.contains("open")) refreshSession().catch(function (error) {
+          console.error("[reporting-widget]", error);
+          status.textContent = "Sesi widget belum tersedia. Sedang mencoba lagi...";
+          status.classList.add("visible");
+          function retry() {
+            if (!panel.classList.contains("open")) return;
+            refreshSession().catch(function (retryError) {
+              console.error("[reporting-widget]", retryError);
+              sessionTimer = setTimeout(retry, 30000);
+            });
+          }
+          sessionTimer = setTimeout(retry, 30000);
+        });
+      }, Math.max(1000, (data.expiresInSeconds - 120) * 1000));
+      return token;
+    }).finally(function () { sessionRequest = null; });
+    return sessionRequest;
+  }
   function clamp(value, min, max) {
     return Math.min(Math.max(value, min), max);
   }
@@ -169,8 +216,27 @@
     var open = force === undefined ? !panel.classList.contains("open") : force;
     // Load lazily: an unopened widget should cost the host page nothing.
     if (open && !loaded) {
-      frame.src = origin + "/embed/reporting#token=" + encodeURIComponent(token);
-      loaded = true;
+      if (installationId) {
+        refreshSession().then(function () {
+          if (!loaded) {
+            frame.src = origin + "/embed/reporting?widget=" + encodeURIComponent(installationId) +
+              "#token=" + encodeURIComponent(token);
+            loaded = true;
+          }
+        }).catch(function (error) {
+          console.error("[reporting-widget]", error);
+          status.textContent = "Widget belum tersedia. Periksa domain pendaftaran atau koneksi server.";
+          status.classList.add("visible");
+          setTimeout(function () {
+            if (panel.classList.contains("open") && !loaded) toggle(true);
+          }, 30000);
+        });
+      } else {
+        frame.src = origin + "/embed/reporting#token=" + encodeURIComponent(token);
+        loaded = true;
+      }
+    } else if (open && installationId && sessionExpiresAt - Date.now() < 120000) {
+      refreshSession().catch(function (error) { console.error("[reporting-widget]", error); });
     }
     if (open) {
       geometry = fit(geometry || initialGeometry());

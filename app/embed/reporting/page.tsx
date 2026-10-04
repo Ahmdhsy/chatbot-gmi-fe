@@ -3,10 +3,8 @@
 /* Standalone chat for embedding on another site — no admin shell, no sidebar.
    Loaded inside an iframe by public/widget.js, or linked/iframed directly.
 
-   The token arrives in the URL FRAGMENT (#token=...), never the query string:
-   a fragment is not sent to the server, so it stays out of access logs and
-   Referer headers. It is short-lived and only opens the reporting endpoints
-   (see backend app/api/embed.py). */
+   A superadmin-issued reporting token arrives in the URL fragment, which is
+   removed from the address bar after the page reads it. */
 
 import { useEffect, useState } from "react";
 import { ThemeProvider } from "next-themes";
@@ -27,6 +25,12 @@ export default function EmbedReportingPage() {
     // in a shared screen or copied link.
     if (t) window.history.replaceState(null, "", window.location.pathname);
     setToken(t);
+    const receiveToken = (event: MessageEvent) => {
+      if (event.source !== window.parent || event.data?.type !== "reporting-widget-token") return;
+      if (typeof event.data.token === "string") setToken(event.data.token);
+    };
+    window.addEventListener("message", receiveToken);
+    return () => window.removeEventListener("message", receiveToken);
   }, []);
 
   if (token === null) return null; // belum sempat membaca hash
@@ -44,9 +48,9 @@ export default function EmbedReportingPage() {
     return shell(
       <main className="grid h-dvh place-items-center bg-gray-dark p-6">
         <div className="max-w-xs text-center">
-          <p className="text-sm font-medium text-red-500">Sesi kedaluwarsa</p>
+          <p className="text-sm font-medium text-red-500">Token widget belum dipasang</p>
           <p className="mt-1 text-sm text-[#8f8f8a]">
-            Muat ulang halaman induknya untuk mulai lagi.
+            Minta superadmin membuat token di Dashboard → Token Widget.
           </p>
         </div>
       </main>,

@@ -28,15 +28,6 @@ const nextConfig: NextConfig = {
   // Baseline security headers on every frontend response. (Caddy also sets HSTS
   // etc. at the edge; these keep the app safe even if served directly.)
   async headers() {
-    // Sites allowed to iframe the /embed pages, comma-separated, e.g.
-    // "https://portal.example.co.id,https://intranet.example.co.id".
-    // Empty (the default) means nobody may embed — an origin must be named
-    // deliberately, never inherited from a wildcard.
-    const embedders = (process.env.EMBED_ALLOWED_ORIGINS ?? "")
-      .split(",")
-      .map((o) => o.trim())
-      .filter(Boolean);
-
     const baseHeaders = [
       { key: "X-Content-Type-Options", value: "nosniff" },
       { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
@@ -47,19 +38,7 @@ const nextConfig: NextConfig = {
     ];
 
     return [
-      {
-        // The /embed pages are the ONLY ones meant to live in someone else's
-        // frame. X-Frame-Options has no allow-list, so they use CSP
-        // frame-ancestors instead; it is what modern browsers honour anyway.
-        source: "/embed/:path*",
-        headers: [
-          ...baseHeaders,
-          {
-            key: "Content-Security-Policy",
-            value: `frame-ancestors ${embedders.length ? embedders.join(" ") : "'none'"}`,
-          },
-        ],
-      },
+      { source: "/embed/:path*", headers: baseHeaders },
       {
         // Everything else stays un-framable, clickjacking included. The
         // negative lookahead matters: Next applies EVERY matching rule, so a
