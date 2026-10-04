@@ -57,6 +57,10 @@ lain — chat LLM, `/reporting/run`, bahkan untuk mencetak token lagi — hasiln
 
 Atribut opsional: `data-title`, `data-position="left"`, `data-open="true"`,
 `data-origin`. Kontrol dari JS: `ReportingWidget.open() / .close() / .toggle()`.
+Panel bisa digeser lewat bilah judul, diperbesar atau dipulihkan lewat tombol
+di kanan atas, dan diubah ukurannya lewat pojok kanan bawah. Tombol Escape
+menutup panel. Kontrol JS tambahan: `ReportingWidget.maximize()` dan
+`ReportingWidget.restore()`.
 
 **Halaman penuh**
 

@@ -80,7 +80,7 @@ function inferSeriesField(data: Array<Record<string, unknown>>, xField: string, 
   return undefined;
 }
 
-export function Chart({ chart }: { chart: ChartData }) {
+export const Chart = React.memo(function Chart({ chart }: { chart: ChartData }) {
   const yField = chart.yField || inferYField(chart.data);
   const xField = chart.xField || inferXField(chart.data, yField);
   const seriesField = chart.seriesField || inferSeriesField(chart.data, xField, yField);
@@ -213,7 +213,7 @@ export function Chart({ chart }: { chart: ChartData }) {
       />
     </div>
   );
-}
+});
 function isPipeRow(line: string) {
   const trimmed = line.trim();
   if (!trimmed.includes("|")) return false;
@@ -856,7 +856,7 @@ const MD_COMPONENTS: Components = {
     ),
   };
 
-export function MarkdownMessage({ content }: { content: string }) {
+export const MarkdownMessage = React.memo(function MarkdownMessage({ content }: { content: string }) {
   const normalizedContent = React.useMemo(
     () => normalizeMarkdownTables(normalizeInsightLists(content)),
     [content]
@@ -969,4 +969,4 @@ export function MarkdownMessage({ content }: { content: string }) {
       {exportAllBtn}
     </div>
   );
-}
+});

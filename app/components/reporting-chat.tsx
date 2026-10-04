@@ -87,6 +87,20 @@ function stripTableHeading(md: string): string {
   return md.replace(/^\*\*(?:Tabel|Table): [^*]+\*\*\s*$/gm, "").trim();
 }
 
+// Keep old tables, Markdown, and charts out of the textarea's render path.
+// A report object stays the same while the user types the next question.
+const ReportContent = React.memo(function ReportContent({ report }: { report: AskResponse }) {
+  const markdown = React.useMemo(() => stripTableHeading(report.markdown), [report.markdown]);
+  return (
+    <>
+      <MarkdownMessage content={markdown} />
+      {(report.charts ?? []).map((chart, index) => (
+        <Chart key={index} chart={chart as unknown as ChartData} />
+      ))}
+    </>
+  );
+});
+
 function Chips({
   items,
   onPick,
@@ -336,10 +350,7 @@ export default function ReportingChat({ token, compact = false }: ReportingChatP
                       )}
                     </div>
                     <div className="min-w-0 text-dark dark:text-[#d8d2c4]">
-                      <MarkdownMessage content={stripTableHeading(m.report.markdown)} />
-                      {(m.report.charts ?? []).map((c, idx) => (
-                        <Chart key={idx} chart={c as unknown as ChartData} />
-                      ))}
+                      <ReportContent report={m.report} />
                     </div>
                   </div>
                 )}
