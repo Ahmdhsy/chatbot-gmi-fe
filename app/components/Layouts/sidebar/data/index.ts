@@ -60,8 +60,14 @@ export const NAV_DATA: NavSection[] = [
         superadminOnly: true,
       },
       {
-        title: "Database Sources",
+        title: "Database Sources LLM",
         url: "/admin/databases",
+        icon: Icons.Table,
+        items: [],
+      },
+      {
+        title: "Database Sources NLP",
+        url: "/admin/databases-nlp",
         icon: Icons.Table,
         items: [],
       },

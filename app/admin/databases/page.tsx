@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import Breadcrumb from "@/components/Breadcrumbs/Breadcrumb";
 import { apiFetch } from "@/app/lib/api";
 import {
@@ -25,6 +26,7 @@ interface ConnectionType {
   databaseName: string;
   schemaName: string | null;
   connectionType: string;
+  purpose: "llm" | "nlp" | "shared";
   status: string;
   isReadOnly: boolean;
   createdAt: string;
@@ -39,6 +41,7 @@ interface TableMeta {
   rowCount: number;
   isView: boolean;
   columns: { name: string; type?: string }[];
+  metrics: (Pick<MetricInfo, "base" | "description" | "aliases" | "variantCount"> & { columns: string[] })[];
 }
 
 interface JobInfo {
@@ -104,7 +107,7 @@ const INGESTION_MODES = [
   {
     value: "metadata_only",
     label: "Metadata Only (recommended)",
-    hint: "Hanya schema + catalog; data di-query live saat chatbot butuh.",
+    hint: "Schema + katalog + embedding untuk LLM; data di-query live saat chatbot butuh.",
   },
   {
     value: "full",
@@ -218,7 +221,8 @@ function jobTone(status: string): "green" | "red" | "yellow" {
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
-export default function ManageDatabasesPage() {
+function DatabaseSourcesPage({ purpose = "llm" }: { purpose?: "llm" | "nlp" }) {
+  const isNlp = purpose === "nlp";
   const [connections, setConnections] = useState<ConnectionType[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -244,6 +248,8 @@ export default function ManageDatabasesPage() {
   const [tablesError, setTablesError] = useState<string | null>(null);
   const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set());
   const [ingestMode, setIngestMode] = useState("metadata_only");
+  const [ingestStep, setIngestStep] = useState<"tables" | "metrics">("tables");
+  const [ingestMetricDrafts, setIngestMetricDrafts] = useState<Record<string, MetricDraft>>({});
 
   // Delete modal
   const [connToDelete, setConnToDelete] = useState<ConnectionType | null>(null);
@@ -269,7 +275,7 @@ export default function ManageDatabasesPage() {
 
   const fetchConnections = useCallback(async () => {
     try {
-      const res = await apiFetch("/databases/connections");
+      const res = await apiFetch(`/databases/connections?purpose=${purpose}`);
       if (res.ok) {
         setConnections(await res.json());
         setError(null);
@@ -281,7 +287,7 @@ export default function ManageDatabasesPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [purpose]);
 
   useEffect(() => {
     fetchConnections();
@@ -347,7 +353,7 @@ export default function ManageDatabasesPage() {
   const handleSync = async (conn: ConnectionType) => {
     try {
       const res = await apiFetch(
-        `/databases/connections/${conn.connectionId}/sync`,
+        `/databases/connections/${conn.connectionId}/sync?purpose=${purpose}`,
         { method: "POST" },
       );
       const body = await res.json().catch(() => null);
@@ -382,6 +388,8 @@ export default function ManageDatabasesPage() {
     setTables([]);
     setSelectedTables(new Set());
     setIngestMode("metadata_only");
+    setIngestStep("tables");
+    setIngestMetricDrafts({});
     setTablesError(null);
     setTablesLoading(true);
     try {
@@ -415,23 +423,52 @@ export default function ManageDatabasesPage() {
     });
   };
 
+  const openIngestMetrics = () => {
+    const drafts: Record<string, MetricDraft> = { ...ingestMetricDrafts };
+    tables.filter((table) => selectedTables.has(table.tableName)).forEach((table) => {
+      (table.metrics ?? []).forEach((metric) => {
+        const key = `${table.tableName}:${metric.base}`;
+        drafts[key] ??= { description: metric.description, aliases: metric.aliases.join(", ") };
+      });
+    });
+    setIngestMetricDrafts(drafts);
+    setIngestStep("metrics");
+  };
+
   const handleStartIngest = async () => {
     if (!ingestConn || selectedTables.size === 0) return;
     const conn = ingestConn;
+    const metricOverrides: Record<string, Record<string, { description?: string; aliases?: string[] }>> = {};
+    if (isNlp) {
+      tables.filter((table) => selectedTables.has(table.tableName)).forEach((table) => {
+        (table.metrics ?? []).forEach((metric) => {
+          const draft = ingestMetricDrafts[`${table.tableName}:${metric.base}`];
+          if (!draft) return;
+          const changes: { description?: string; aliases?: string[] } = {};
+          const aliases = parseCsv(draft.aliases);
+          if (draft.description.trim() !== metric.description) changes.description = draft.description.trim();
+          if (JSON.stringify(aliases) !== JSON.stringify(metric.aliases)) changes.aliases = aliases;
+          if (Object.keys(changes).length) {
+            (metricOverrides[table.tableName] ??= {})[metric.base] = changes;
+          }
+        });
+      });
+    }
     try {
-      const res = await apiFetch("/databases/ingestions", {
+      const res = await apiFetch(isNlp ? "/databases/nlp/ingestions" : "/databases/ingestions", {
         method: "POST",
         body: JSON.stringify({
           connectionId: conn.connectionId,
           tables: Array.from(selectedTables),
-          ingestionMode: ingestMode,
+          ingestionMode: isNlp ? "metadata_only" : ingestMode,
           schemaFilter: conn.schemaName || null,
+          ...(isNlp ? { metricOverrides } : {}),
         }),
       });
       const body = await res.json().catch(() => null);
       if (res.ok) {
         setIngestConn(null);
-        trackJob(conn.connectionId, body.ingestionId, `Ingest (${ingestMode})`);
+        trackJob(conn.connectionId, body.ingestionId, `Ingest (${isNlp ? "metadata_only" : ingestMode})`);
       } else {
         setTablesError(body?.detail ?? `Gagal memulai ingestion (status ${res.status}).`);
       }
@@ -607,6 +644,7 @@ export default function ManageDatabasesPage() {
           username: connForm.username.trim(),
           password: connForm.password,
           schemaName: connForm.schemaName.trim() || null,
+          purpose,
         }),
       });
       const body = await res.json().catch(() => null);
@@ -661,12 +699,12 @@ export default function ManageDatabasesPage() {
 
   return (
     <>
-      <Breadcrumb pageName="Database Sources" />
+      <Breadcrumb pageName={isNlp ? "Database Sources NLP" : "Database Sources LLM"} />
 
       <div className="rounded-[10px] border border-stroke bg-white p-4 shadow-1 dark:border-dark-3 dark:bg-gray-dark dark:shadow-card sm:p-7.5">
         <div className="mb-6 flex items-center justify-between">
           <h3 className="text-xl font-semibold text-dark dark:text-white">
-            External Database Connections
+            {isNlp ? "NLP Database Connections" : "LLM Database Connections"}
           </h3>
           <button
             onClick={() => setShowAddModal(true)}
@@ -913,7 +951,7 @@ export default function ManageDatabasesPage() {
               </div>
             ) : (
               <>
-                <Field label={`Pilih tabel (${selectedTables.size} dipilih)`}>
+                {(!isNlp || ingestStep === "tables") && <Field label={`Pilih tabel (${selectedTables.size} dipilih)`}>
                   <div className="max-h-64 overflow-y-auto rounded-lg border border-stroke dark:border-dark-3">
                     {tables.length === 0 ? (
                       <div className="p-4 text-center text-sm text-gray-500 dark:text-[#8f8f8a]">
@@ -948,20 +986,68 @@ export default function ManageDatabasesPage() {
                       ))
                     )}
                   </div>
-                </Field>
+                </Field>}
 
-                <Field label="Ingestion Mode">
-                  <select value={ingestMode} onChange={(e) => setIngestMode(e.target.value)} className={inputClass}>
-                    {INGESTION_MODES.map((m) => (
-                      <option key={m.value} value={m.value} className="dark:bg-[#232220]">
-                        {m.label}
-                      </option>
-                    ))}
-                  </select>
+                {isNlp && ingestStep === "metrics" && (
+                  <div className="space-y-4">
+                    <div>
+                      <h3 className="font-semibold text-dark dark:text-white">Manage Metrics sebelum ingestion</h3>
+                      <p className="mt-1 text-xs text-gray-500 dark:text-[#8f8f8a]">
+                        Alias bawaan dari column_descriptions sudah terisi. Perbaiki istilah yang akan dipakai user saat bertanya. Kolom variasi seperti MTD dan YoY dikelompokkan per KPI.
+                      </p>
+                    </div>
+                    <div className="max-h-[480px] space-y-4 overflow-y-auto pr-1">
+                      {tables.filter((table) => selectedTables.has(table.tableName)).map((table) => (
+                        <section key={`${table.schemaName ?? ""}.${table.tableName}`} className="rounded-lg border border-stroke p-4 dark:border-dark-3">
+                          <h4 className="mb-3 font-semibold text-dark dark:text-white">{table.tableName}</h4>
+                          {(table.metrics ?? []).length === 0 ? (
+                            <p className="text-sm text-gray-500">Tidak ada kolom KPI numerik yang dikenali.</p>
+                          ) : (table.metrics ?? []).map((metric) => {
+                            const key = `${table.tableName}:${metric.base}`;
+                            const draft = ingestMetricDrafts[key];
+                            if (!draft) return null;
+                            return (
+                              <div key={key} className="mb-4 grid gap-3 border-b border-stroke pb-4 last:mb-0 last:border-b-0 last:pb-0 dark:border-dark-3">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono text-sm font-semibold text-dark dark:text-white">{metric.base}</span>
+                                  <span className="text-xs text-gray-500">{metric.variantCount} kolom</span>
+                                </div>
+                                <p className="break-words font-mono text-xs text-gray-500" title={metric.columns.join(", ")}>
+                                  {metric.columns.join(", ")}
+                                </p>
+                                <Field label="Deskripsi KPI">
+                                  <input type="text" value={draft.description} onChange={(e) => setIngestMetricDrafts((prev) => ({ ...prev, [key]: { ...prev[key], description: e.target.value } }))} className={inputClass} />
+                                </Field>
+                                <Field label="Alias untuk pertanyaan user (pisahkan dengan koma)">
+                                  <input type="text" value={draft.aliases} onChange={(e) => setIngestMetricDrafts((prev) => ({ ...prev, [key]: { ...prev[key], aliases: e.target.value } }))} className={inputClass} placeholder="contoh: payload total, total trafik" />
+                                </Field>
+                              </div>
+                            );
+                          })}
+                        </section>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {isNlp ? ingestStep === "tables" && (
                   <p className="text-xs text-gray-500 dark:text-[#8f8f8a]">
-                    {INGESTION_MODES.find((m) => m.value === ingestMode)?.hint}
+                    Metadata only: katalog KPI dan lokasi disimpan tanpa embedding. Data tetap dibaca langsung dari database.
                   </p>
-                </Field>
+                ) : (
+                  <Field label="Ingestion Mode">
+                    <select value={ingestMode} onChange={(e) => setIngestMode(e.target.value)} className={inputClass}>
+                      {INGESTION_MODES.map((m) => (
+                        <option key={m.value} value={m.value} className="dark:bg-[#232220]">
+                          {m.label}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-gray-500 dark:text-[#8f8f8a]">
+                      {INGESTION_MODES.find((m) => m.value === ingestMode)?.hint}
+                    </p>
+                  </Field>
+                )}
               </>
             )}
 
@@ -973,13 +1059,18 @@ export default function ManageDatabasesPage() {
               >
                 Cancel
               </button>
+              {isNlp && ingestStep === "metrics" && (
+                <button type="button" onClick={() => setIngestStep("tables")} className="rounded-lg border border-stroke px-4 py-2 text-sm font-semibold text-dark dark:border-dark-3 dark:text-white">
+                  Kembali
+                </button>
+              )}
               <button
                 type="button"
-                onClick={handleStartIngest}
+                onClick={isNlp && ingestStep === "tables" ? openIngestMetrics : handleStartIngest}
                 disabled={selectedTables.size === 0 || tablesLoading}
                 className="rounded-lg bg-[#FE6C11] px-5 py-2 text-sm font-semibold text-white hover:bg-[#e05b0a] disabled:opacity-50 transition-colors"
               >
-                Start Ingestion
+                {isNlp && ingestStep === "tables" ? "Lanjut: Manage Metrics" : "Start Ingestion"}
               </button>
             </div>
           </div>
@@ -1277,4 +1368,9 @@ export default function ManageDatabasesPage() {
       )}
     </>
   );
+}
+
+export default function ManageDatabasesPage() {
+  const pathname = usePathname();
+  return <DatabaseSourcesPage purpose={pathname?.startsWith("/admin/databases-nlp") ? "nlp" : "llm"} />;
 }
