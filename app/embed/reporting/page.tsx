@@ -9,6 +9,7 @@
 import { useEffect, useState } from "react";
 import { ThemeProvider } from "next-themes";
 import ReportingChat from "@/components/reporting-chat";
+import WidgetKpiSummary from "@/components/widget-kpi-summary";
 
 function tokenFromHash(): string {
   if (typeof window === "undefined") return "";
@@ -18,6 +19,8 @@ function tokenFromHash(): string {
 
 export default function EmbedReportingPage() {
   const [token, setToken] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"chat" | "summary">("summary");
+  const [widgetOpen, setWidgetOpen] = useState(true);
 
   useEffect(() => {
     const t = tokenFromHash();
@@ -25,12 +28,17 @@ export default function EmbedReportingPage() {
     // in a shared screen or copied link.
     if (t) window.history.replaceState(null, "", window.location.pathname);
     setToken(t);
-    const receiveToken = (event: MessageEvent) => {
-      if (event.source !== window.parent || event.data?.type !== "reporting-widget-token") return;
-      if (typeof event.data.token === "string") setToken(event.data.token);
+    const receiveWidgetMessage = (event: MessageEvent) => {
+      if (event.source !== window.parent) return;
+      if (event.data?.type === "reporting-widget-token" && typeof event.data.token === "string") {
+        setToken(event.data.token);
+      }
+      if (event.data?.type === "reporting-widget-visibility" && typeof event.data.open === "boolean") {
+        setWidgetOpen(event.data.open);
+      }
     };
-    window.addEventListener("message", receiveToken);
-    return () => window.removeEventListener("message", receiveToken);
+    window.addEventListener("message", receiveWidgetMessage);
+    return () => window.removeEventListener("message", receiveWidgetMessage);
   }, []);
 
   if (token === null) return null; // belum sempat membaca hash
@@ -75,8 +83,24 @@ export default function EmbedReportingPage() {
         </div>
       </header>
 
-      <div className="min-h-0 flex-1">
-        <ReportingChat token={token} compact />
+      <nav className="flex shrink-0 border-b border-dark-3 md:hidden" aria-label="Tampilan widget">
+        <button type="button" onClick={() => setActiveTab("summary")}
+          className={`flex-1 px-3 py-2 text-sm ${activeTab === "summary" ? "border-b-2 border-primary text-white" : "text-[#8f8f8a]"}`}>
+          Rangkuman KPI
+        </button>
+        <button type="button" onClick={() => setActiveTab("chat")}
+          className={`flex-1 px-3 py-2 text-sm ${activeTab === "chat" ? "border-b-2 border-primary text-white" : "text-[#8f8f8a]"}`}>
+          Chat
+        </button>
+      </nav>
+
+      <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+        <aside className={`${activeTab === "summary" ? "block" : "hidden"} min-h-0 border-r border-dark-3 md:block`} aria-label="Rangkuman KPI">
+          <WidgetKpiSummary token={token} active={widgetOpen} />
+        </aside>
+        <section className={`${activeTab === "chat" ? "block" : "hidden"} min-h-0 md:block`} aria-label="Chat KPI">
+          <ReportingChat token={token} compact />
+        </section>
       </div>
     </div>,
   );

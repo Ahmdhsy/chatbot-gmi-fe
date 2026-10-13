@@ -12,6 +12,7 @@ interface Installation {
   scope: string;
   targetUserId: string;
   active: boolean;
+  supported: boolean;
   createdAt: string;
 }
 
@@ -114,7 +115,7 @@ export default function WidgetTokensPage() {
       <p className="mt-2 text-sm text-[#aaa49c]">
         Daftarkan website sekali, lalu salin kode widget ke halaman website itu.
         Kode pemasangan berlaku sampai dicabut. Sesi akses diperbarui otomatis;
-        cakupan data mengikuti akun yang dipilih.
+        cakupan data widget NLP selalu NATIONWIDE.
       </p>
       {error && <p role="alert" className="mt-4 text-sm text-red-400">{error}</p>}
 
@@ -129,14 +130,15 @@ export default function WidgetTokensPage() {
           placeholder="https://portal.example.com" type="url"
           className="w-full rounded-lg border border-dark-3 bg-[#232220] px-3 py-2.5 text-sm text-white" />
         <p className="text-xs text-[#aaa49c]">Isi alamat utama saja, tanpa path. Untuk demo lokal: http://localhost:8080.</p>
-        <label className="block text-sm" htmlFor="site-account">Akun dan cakupan data</label>
+        <label className="block text-sm" htmlFor="site-account">Akun widget NATIONWIDE</label>
         <select id="site-account" value={targetUserId}
           onChange={(event) => setTargetUserId(event.target.value)} disabled={loading || creatingSite}
           className="w-full rounded-lg border border-dark-3 bg-[#232220] px-3 py-2.5 text-sm text-white">
           {users.map((user) => <option key={user.userId} value={user.userId}>
-            {user.email} — {user.role} — {user.scope}
+            {user.email} — NATIONWIDE
           </option>)}
         </select>
+        {!loading && users.length === 0 && <p className="text-xs text-amber-400">Belum ada akun executive aktif. Buat akun executive di Manage User untuk memasang widget.</p>}
         <button type="button" onClick={createSite}
           disabled={loading || creatingSite || !targetUserId || !siteLabel.trim() || !siteOrigin.trim()}
           className="rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
@@ -152,11 +154,11 @@ export default function WidgetTokensPage() {
             className="rounded-lg border border-dark-3 p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div><strong>{installation.label}</strong><p className="text-xs text-[#aaa49c]">{installation.origin} · {installation.scope}</p></div>
-              <span className={installation.active ? "text-xs text-green-400" : "text-xs text-red-400"}>
-                {installation.active ? "Aktif" : "Dicabut"}
+              <span className={installation.active && installation.supported ? "text-xs text-green-400" : "text-xs text-red-400"}>
+                {!installation.active ? "Dicabut" : installation.supported ? "Aktif" : "Cakupan lama tidak didukung"}
               </span>
             </div>
-            {installation.active && <>
+            {installation.active && installation.supported && <>
               <textarea readOnly value={snippet(installation)} aria-label={`Kode widget ${installation.label}`}
                 className="mt-3 h-20 w-full resize-none rounded-lg border border-dark-3 bg-[#232220] p-3 font-mono text-xs text-white" />
               <div className="mt-2 flex gap-2">
@@ -164,12 +166,13 @@ export default function WidgetTokensPage() {
                   className="rounded-lg border border-dark-3 px-3 py-2 text-sm hover:border-primary">
                   {copiedSite === installation.installationId ? "Tersalin" : "Salin kode"}
                 </button>
-                <button type="button" onClick={() => revokeSite(installation)}
-                  className="rounded-lg border border-red-500/50 px-3 py-2 text-sm text-red-400">
-                  Cabut akses
-                </button>
               </div>
             </>}
+            {installation.active && !installation.supported && <p className="mt-3 text-xs text-amber-400">Kode area lama tidak dapat dipakai. Daftarkan ulang website dengan akun NATIONWIDE.</p>}
+            {installation.active && <button type="button" onClick={() => revokeSite(installation)}
+              className="mt-2 rounded-lg border border-red-500/50 px-3 py-2 text-sm text-red-400">
+              Cabut akses
+            </button>}
           </div>)}
         </div>
       </div>

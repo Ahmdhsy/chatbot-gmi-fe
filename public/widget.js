@@ -49,9 +49,7 @@
     "background:#f06a25;color:#fff;font-size:24px;line-height:1;",
     "box-shadow:0 6px 20px rgba(0,0,0,.25)}",
     ".btn:hover{filter:brightness(1.08)}",
-    // KPI tables are wide: a narrow panel turns every answer into a
-    // horizontal scroll hunt. 520px is the point where the Data/%MoM/%QoQ
-    // columns fit without the host page feeling taken over.
+    // Chat and KPI summary sit side by side when the host viewport allows it.
     ".panel{position:fixed;z-index:2147483646;display:none;flex-direction:column;",
     "overflow:hidden;border:1px solid #3b3834;border-radius:16px;background:#1a1a19;",
     "box-shadow:0 18px 50px rgba(0,0,0,.35)}",
@@ -129,6 +127,12 @@
   var sessionExpiresAt = 0;
   var sessionTimer = null;
   var sessionRequest = null;
+  function notifyVisibility() {
+    if (loaded && frame.contentWindow) {
+      frame.contentWindow.postMessage({ type: "reporting-widget-visibility", open: panel.classList.contains("open") }, origin);
+    }
+  }
+  frame.addEventListener("load", notifyVisibility);
   function refreshSession() {
     if (!installationId) return Promise.resolve(token);
     if (sessionRequest) return sessionRequest;
@@ -181,7 +185,7 @@
     };
   }
   function initialGeometry() {
-    var width = Math.min(520, window.innerWidth - 16);
+    var width = Math.min(980, window.innerWidth - 16);
     var height = Math.min(720, window.innerHeight - 96);
     return fit({
       x: side === "left" ? 20 : window.innerWidth - width - 20,
@@ -243,6 +247,7 @@
       draw(maximized ? fullGeometry() : geometry);
     }
     panel.classList.toggle("open", open);
+    notifyVisibility();
     btn.setAttribute("aria-expanded", String(open));
     btn.textContent = open ? "✕" : "\u{1F4AC}";
   }

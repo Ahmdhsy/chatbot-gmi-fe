@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { usePathname } from "next/navigation";
 import Breadcrumb from "@/components/Breadcrumbs/Breadcrumb";
 import { apiFetch } from "@/app/lib/api";
@@ -57,6 +58,7 @@ interface MetricInfo {
   aliases: string[];
   sets: string[];
   variantCount: number;
+  variants: Record<string, string>;
   autoDiscovered: boolean;
   overridden: boolean;
 }
@@ -74,6 +76,16 @@ interface TableMetrics {
   tableName: string;
   metrics: MetricInfo[];
   sets: MetricSet[];
+  widgetSummaryMetrics: WidgetSummarySelection[];
+}
+
+interface WidgetSummarySelection {
+  metric: string;
+  variant: string;
+}
+
+function widgetVariantLabel(variant: string): string {
+  return variant === "raw" ? "Harian (tanggal tersedia)" : variant.replaceAll("_", " ").toUpperCase();
 }
 
 /** Editable fields of one metric row (aliases as comma-separated text). */
@@ -167,29 +179,43 @@ function ModalShell({
   children: React.ReactNode;
   wide?: boolean;
 }) {
-  return (
-    <div className="fixed inset-0 z-9999 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = previousOverflow; };
+  }, []);
+
+  if (!mounted) return null;
+
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 p-3 backdrop-blur-sm sm:p-6">
       <div
         className={cn(
-          "relative w-full rounded-[14px] border border-stroke bg-white p-6 shadow-1 dark:border-dark-3 dark:bg-[#232220] dark:shadow-card animate-slideIn",
-          wide ? "max-w-[640px]" : "max-w-[480px]",
+          "relative flex max-h-[calc(100dvh-1.5rem)] w-full min-h-0 flex-col overflow-hidden rounded-[14px] border border-stroke bg-white shadow-1 dark:border-dark-3 dark:bg-[#232220] dark:shadow-card animate-slideIn sm:max-h-[calc(100dvh-3rem)]",
+          wide ? "max-w-[880px]" : "max-w-[480px]",
         )}
       >
-        <div className="flex items-center justify-between border-b border-stroke pb-4 dark:border-dark-3">
+        <div className="flex shrink-0 items-center justify-between border-b border-stroke px-5 py-4 dark:border-dark-3 sm:px-6">
           <h3 className="text-lg font-bold text-dark dark:text-white">{title}</h3>
           <button
+            type="button"
             onClick={onClose}
-            className="text-gray-500 hover:text-dark dark:text-[#8f8f8a] dark:hover:text-white transition-colors"
+            aria-label="Tutup"
+            className="rounded p-1 text-gray-500 transition-colors hover:bg-gray-100 hover:text-dark dark:text-[#8f8f8a] dark:hover:bg-[#38342f] dark:hover:text-white"
           >
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
-        {children}
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-5 sm:px-6 sm:pb-6">{children}</div>
       </div>
       <style>{`@keyframes slideIn { from { opacity:0; transform:translateY(-20px) } to { opacity:1; transform:translateY(0) } } .animate-slideIn { animation: slideIn 0.2s ease-out forwards; }`}</style>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -265,6 +291,10 @@ function DatabaseSourcesPage({ purpose = "llm" }: { purpose?: "llm" | "nlp" }) {
   const [metricDrafts, setMetricDrafts] = useState<Record<string, MetricDraft>>({});
   const [metricSaving, setMetricSaving] = useState<Record<string, boolean>>({});
   const [metricSaved, setMetricSaved] = useState<Record<string, boolean>>({});
+  const [widgetSummaryDraft, setWidgetSummaryDraft] = useState<WidgetSummarySelection[]>([]);
+  const [widgetVariantDraft, setWidgetVariantDraft] = useState<Record<string, string>>({});
+  const [widgetSummarySaving, setWidgetSummarySaving] = useState(false);
+  const [metricsTab, setMetricsTab] = useState<"widget" | "sets" | "aliases">("widget");
   // Metric set editor (inside the same modal)
   const [setDrafts, setSetDrafts] = useState<Record<string, SetDraft>>({});
   const [newSetName, setNewSetName] = useState("");
@@ -488,6 +518,8 @@ function DatabaseSourcesPage({ purpose = "llm" }: { purpose?: "llm" | "nlp" }) {
     setSetDrafts(
       Object.fromEntries((table?.sets ?? []).map((s) => [s.name, toSetDraft(s)])),
     );
+    setWidgetSummaryDraft(table?.widgetSummaryMetrics ?? []);
+    setWidgetVariantDraft(Object.fromEntries((table?.metrics ?? []).map((m) => [m.base, m.variants.mtd ? "mtd" : m.variants.raw ? "raw" : Object.keys(m.variants)[0] ?? ""])));
     setMetricSaved({});
   };
 
@@ -498,6 +530,28 @@ function DatabaseSourcesPage({ purpose = "llm" }: { purpose?: "llm" | "nlp" }) {
     setMetricTables(body);
     const stillThere = body.some((t) => t.tableId === keepTableId);
     selectMetricsTable(body, stillThere ? keepTableId : (body[0]?.tableId ?? ""));
+  };
+
+  const handleSaveWidgetSummary = async () => {
+    if (!metricsConn || !metricsTableId) return;
+    setWidgetSummarySaving(true);
+    setMetricsError(null);
+    try {
+      const res = await apiFetch(`/databases/tables/${metricsTableId}/widget-summary`, {
+        method: "PUT",
+        body: JSON.stringify({ metrics: widgetSummaryDraft }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setMetricsError(body?.detail ?? `Gagal menyimpan rangkuman widget (status ${res.status}).`);
+      } else {
+        await reloadMetrics(metricsConn.connectionId, metricsTableId);
+      }
+    } catch {
+      setMetricsError("Terjadi kesalahan jaringan.");
+    } finally {
+      setWidgetSummarySaving(false);
+    }
   };
 
   /** Create a set, or save an existing set's aliases + member columns. */
@@ -557,6 +611,7 @@ function DatabaseSourcesPage({ purpose = "llm" }: { purpose?: "llm" | "nlp" }) {
 
   const handleOpenMetrics = async (conn: ConnectionType) => {
     setMetricsConn(conn);
+    setMetricsTab(isNlp ? "widget" : "sets");
     setMetricTables([]);
     setMetricsError(null);
     setMetricsLoading(true);
@@ -1109,13 +1164,78 @@ function DatabaseSourcesPage({ purpose = "llm" }: { purpose?: "llm" | "nlp" }) {
                   </Field>
                 )}
 
+                <div className="flex flex-wrap gap-2 border-b border-stroke pb-3 dark:border-dark-3" role="tablist" aria-label="Pengaturan KPI">
+                  {(isNlp ? ["widget", "sets", "aliases"] : ["sets", "aliases"]).map((tab) => (
+                    <button key={tab} type="button" role="tab" aria-selected={metricsTab === tab}
+                      onClick={() => setMetricsTab(tab as "widget" | "sets" | "aliases")}
+                      className={cn("rounded-lg px-4 py-2 text-sm font-semibold transition-colors", metricsTab === tab
+                        ? "bg-[#FE6C11] text-white"
+                        : "bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-[#302e2b] dark:text-[#c6c1b9] dark:hover:bg-[#3a3733]")}
+                    >
+                      {tab === "widget" ? "Rangkuman Widget" : tab === "sets" ? "Set Report" : "Alias KPI"}
+                    </button>
+                  ))}
+                </div>
+
+                {metricsTab === "widget" && isNlp && currentTable && (
+                  <section className="space-y-4">
+                    <div>
+                      <h3 className="text-sm font-semibold text-dark dark:text-white">Kartu rangkuman widget</h3>
+                      <p className="mt-1 text-xs text-gray-500 dark:text-[#8f8f8a]">Pilih KPI dan varian kolom yang tersedia. KPI yang sama boleh ditambahkan dengan varian berbeda.</p>
+                    </div>
+                    <div className="rounded-lg border border-stroke p-3 dark:border-dark-3">
+                      <h4 className="mb-2 text-xs font-semibold text-dark dark:text-white">Tambah kartu</h4>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {currentTable.metrics.map((metric) => {
+                          const variant = widgetVariantDraft[metric.base] ?? "";
+                          return <div key={metric.base} className="min-w-0 rounded-lg border border-stroke p-3 dark:border-dark-3">
+                            <div className="mb-2 min-w-0">
+                              <p className="font-mono text-xs font-semibold text-dark dark:text-white">{metric.base}</p>
+                              <p className="truncate text-xs text-gray-500 dark:text-[#8f8f8a]" title={metric.description}>{metric.description}</p>
+                            </div>
+                            <div className="flex gap-2">
+                              <select aria-label={`Varian ${metric.base}`} value={variant}
+                                onChange={(event) => setWidgetVariantDraft((previous) => ({ ...previous, [metric.base]: event.target.value }))}
+                                className={cn(inputClass, "min-w-0 flex-1 py-1.5 text-xs")}>
+                                {Object.entries(metric.variants).map(([key, column]) => <option key={key} value={key} title={column}>{widgetVariantLabel(key)} · {column}</option>)}
+                              </select>
+                              <button type="button" disabled={!variant || widgetSummaryDraft.some((item) => item.metric === metric.base && item.variant === variant)}
+                                onClick={() => setWidgetSummaryDraft((previous) => [...previous, { metric: metric.base, variant }])}
+                                className="shrink-0 rounded-lg bg-[#FE6C11] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40">Tambah</button>
+                            </div>
+                          </div>;
+                        })}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-stroke p-3 dark:border-dark-3">
+                      <h4 className="mb-2 text-xs font-semibold text-dark dark:text-white">Kartu terpilih ({widgetSummaryDraft.length})</h4>
+                      {widgetSummaryDraft.length === 0 && <p className="text-xs text-gray-500">Belum ada KPI dipilih.</p>}
+                      <div className="space-y-2">
+                        {widgetSummaryDraft.map((item, index) => <div key={`${item.metric}:${item.variant}`} className="flex items-center gap-2 rounded-lg border border-[#FE6C11]/40 bg-[#FE6C11]/5 px-3 py-2">
+                          <span className="w-5 shrink-0 text-xs text-gray-500">{index + 1}.</span>
+                          <span className="min-w-0 flex-1 truncate text-xs font-semibold text-dark dark:text-white" title={`${item.metric} / ${widgetVariantLabel(item.variant)}`}>{item.metric} / {widgetVariantLabel(item.variant)}</span>
+                          <button type="button" aria-label={`Naikkan ${item.metric} ${item.variant}`} disabled={index === 0}
+                            onClick={() => setWidgetSummaryDraft((previous) => { const next = [...previous]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; return next; })}
+                            className="rounded px-1.5 text-xs text-gray-500 hover:text-white disabled:opacity-30">↑</button>
+                          <button type="button" aria-label={`Turunkan ${item.metric} ${item.variant}`} disabled={index === widgetSummaryDraft.length - 1}
+                            onClick={() => setWidgetSummaryDraft((previous) => { const next = [...previous]; [next[index + 1], next[index]] = [next[index], next[index + 1]]; return next; })}
+                            className="rounded px-1.5 text-xs text-gray-500 hover:text-white disabled:opacity-30">↓</button>
+                          <button type="button" aria-label={`Hapus ${item.metric} ${item.variant}`}
+                            onClick={() => setWidgetSummaryDraft((previous) => previous.filter((_, position) => position !== index))}
+                            className="rounded px-1.5 text-xs font-semibold text-red-500 hover:bg-red-500/10">Hapus</button>
+                        </div>)}
+                      </div>
+                    </div>
+                    <button type="button" onClick={handleSaveWidgetSummary} disabled={widgetSummarySaving}
+                      className="rounded-lg bg-[#FE6C11] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">
+                      {widgetSummarySaving ? "Menyimpan..." : "Simpan Rangkuman Widget"}
+                    </button>
+                  </section>
+                )}
+
+                {metricsTab === "sets" && <>
                 <p className="text-xs text-gray-500 dark:text-[#8f8f8a]">
-                  <b>Set</b> = istilah bisnis untuk SEKELOMPOK kolom (mis.{" "}
-                  <span className="font-mono">key driver</span> = PGB + RGB + RGB Data) —
-                  buka sebuah set untuk memilih kolom anggotanya dan mengatur aliasnya.{" "}
-                  <b>Alias metric</b> (di daftar bawah) = istilah bisnis untuk SATU kolom
-                  (mis. <span className="font-mono">payload user</span>).
-                  Perubahan langsung dipakai chatbot dan tetap tersimpan saat Sync Catalog.
+                  Set mengelompokkan beberapa KPI untuk tabel jawaban chat. Buka set untuk mengubah anggota dan aliasnya.
                 </p>
 
                 {/* Metric sets — each set picks its own member columns */}
@@ -1246,8 +1366,11 @@ function DatabaseSourcesPage({ purpose = "llm" }: { purpose?: "llm" | "nlp" }) {
                     </div>
                   </div>
                 </Field>
+                </>}
 
-                <div className="max-h-[420px] overflow-y-auto rounded-lg border border-stroke dark:border-dark-3">
+                {metricsTab === "aliases" && <>
+                <p className="text-xs text-gray-500 dark:text-[#8f8f8a]">Atur nama dan istilah lain untuk setiap KPI. Perubahan langsung dipakai chatbot dan tetap tersimpan saat Sync Catalog.</p>
+                <div className="rounded-lg border border-stroke dark:border-dark-3">
                   {(currentTable?.metrics ?? []).map((m) => {
                     const draft = metricDrafts[m.base];
                     if (!draft) return null;
@@ -1315,6 +1438,7 @@ function DatabaseSourcesPage({ purpose = "llm" }: { purpose?: "llm" | "nlp" }) {
                     );
                   })}
                 </div>
+                </>}
               </>
             )}
           </div>
